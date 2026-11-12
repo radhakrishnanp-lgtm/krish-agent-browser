@@ -1,0 +1,19 @@
+services:
+  browser:
+    build: .
+    restart: unless-stopped
+    environment:
+      UI_PASSWORD: ${UI_PASSWORD:?set UI_PASSWORD}
+      MCP_TOKEN: ${MCP_TOKEN:?set MCP_TOKEN}
+      PUBLIC_URL: ${PUBLIC_URL:-https://browser.krish.in.net}
+      SCREEN_SIZE: ${SCREEN_SIZE:-1440x900}
+    # Dokploy's Traefik reaches this port inside the Docker network.
+    # It is NOT published on the VPS itself.
+    expose:
+      - "3000"
+    volumes:
+      - browser-data:/data      # logins, cookies, bookmarks, downloads survive redeploys
+    shm_size: "1gb"             # Chromium needs shared memory or tabs crash
+
+volumes:
+  browser-data:

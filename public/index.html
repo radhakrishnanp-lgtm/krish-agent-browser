@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Browser</title>
+<link rel="icon" href="/favicon.svg">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<header>
+  <div class="brand"><img src="/favicon.svg" alt=""><span>Agent Browser</span></div>
+  <div class="pills">
+    <span class="pill" id="pill-browser" title="The Chromium browser on the VPS"><i></i>Browser</span>
+    <span class="pill" id="pill-mcp" title="The MCP endpoint agents connect to"><i></i>MCP</span>
+  </div>
+  <div class="spacer"></div>
+  <button id="btn-pause" class="primary" title="Stop agents from acting while you use the browser">Pause agent</button>
+  <button id="btn-paste" title="Send text from this computer's clipboard into the remote browser">Paste</button>
+  <button id="btn-panel" title="Show or hide the side panel" aria-expanded="true">Panel</button>
+</header>
+
+<div id="banner" hidden>Agent is paused. Agents cannot click or type until you resume.</div>
+
+<main>
+  <section id="stage" aria-label="Live browser">
+    <div id="screen"></div>
+    <div id="overlay">Connecting to the browser…</div>
+  </section>
+
+  <aside id="panel">
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="activity" aria-selected="true">Activity</button>
+      <button role="tab" data-tab="connect" aria-selected="false">Connect an agent</button>
+    </nav>
+
+    <div class="tab" id="tab-activity">
+      <div class="tab-head">
+        <span>What agents are doing, live</span>
+        <button id="btn-clear" class="link">Clear</button>
+      </div>
+      <ol id="log"></ol>
+      <p id="log-empty" class="muted">No agent activity yet. Connect an agent and its actions will appear here while you watch them happen in the browser.</p>
+    </div>
+
+    <div class="tab" id="tab-connect" hidden>
+      <p class="muted">Give these two values to any MCP-capable agent or app. It then controls this same browser.</p>
+      <label>MCP URL (Streamable HTTP)</label>
+      <div class="copy"><code id="mcp-url"></code><button data-copy="mcp-url">Copy</button></div>
+      <label>Token (send as <code>Authorization: Bearer …</code>)</label>
+      <div class="copy"><code id="mcp-token" class="masked"></code><button id="btn-show">Show</button><button data-copy="mcp-token">Copy</button></div>
+      <label>Config for most MCP clients</label>
+      <div class="copy block"><pre id="mcp-json"></pre><button data-copy="mcp-json">Copy</button></div>
+      <label>Client that only accepts a URL</label>
+      <div class="copy"><code id="mcp-qurl" class="masked"></code><button data-copy="mcp-qurl">Copy</button></div>
+      <p class="muted small">Anyone with the token can drive this browser, including sites you are signed in to. Keep it secret.</p>
+      <hr>
+      <button id="btn-restart">Restart browser</button>
+      <button id="btn-logout">Sign out</button>
+    </div>
+  </aside>
+</main>
+
+<div id="toast" role="status" hidden></div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

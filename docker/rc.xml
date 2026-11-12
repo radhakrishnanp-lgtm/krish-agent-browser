@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+  <focus><focusNew>yes</focusNew><followMouse>no</followMouse></focus>
+  <placement><policy>Smart</policy><center>yes</center></placement>
+  <theme><name>Clearlooks</name></theme>
+  <desktops><number>1</number></desktops>
+  <keyboard></keyboard>
+  <mouse></mouse>
+  <applications>
+    <!-- Main browser windows fill the whole screen, without a title bar -->
+    <application class="*" type="normal">
+      <decor>no</decor>
+      <maximized>yes</maximized>
+    </application>
+  </applications>
+</openbox_config>
