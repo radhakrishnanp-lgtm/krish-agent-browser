@@ -26,6 +26,22 @@ It is one browser with many tabs, like the browser on your own computer.
 - Because it is the same browser, **the agent is signed in wherever you are signed in**. Sign in to a site once by hand and the agent can use it. That is the main benefit, and also the main thing to be careful with (see Security).
 - If you and the agent would use the *same* tab together, press **Pause agent** first. While paused, every agent action is refused with a clear message and nothing is clicked.
 
+## It is a full, real browser
+
+Everything is saved in the `browser-data` volume and survives redeploys.
+
+| Feature | How |
+|---|---|
+| History | `Ctrl+H` |
+| Bookmarks | `Ctrl+D` to add, `Ctrl+Shift+B` for the bar |
+| Add-ons (extensions) | Open the [Chrome Web Store](https://chromewebstore.google.com) in the remote browser and press **Add to Chrome**. Ignore the "Switch to Chrome" banner. |
+| Saved passwords, autofill, cookies, logins | Work as usual and are kept. |
+| Downloads | Saved on the VPS. Get them on your own computer from the **Files** tab. |
+| Uploads | **Files → Upload file**, then pick it from the `Downloads` folder in the remote browser's "choose file" dialog. |
+| Settings, dev tools, incognito | `chrome://settings`, `F12`, `Ctrl+Shift+N` |
+
+Your agent uses this same browser, so it gets your logins, your add-ons (for example an ad blocker) and your settings.
+
 ## Deploy on Dokploy
 
 ### 1. DNS record (Cloudflare)
@@ -107,7 +123,27 @@ claude mcp add --transport http krish-browser https://browser.krish.in.net/mcp -
 
 A client that only accepts a URL: `https://browser.krish.in.net/mcp?token=YOUR_MCP_TOKEN`
 
-The agent gets the standard Playwright MCP tools: `browser_navigate`, `browser_snapshot` (read the page), `browser_click`, `browser_type`, `browser_tabs`, `browser_take_screenshot` and more. Tip for agents: call `browser_snapshot` after navigating to read the page, and open a new tab with `browser_tabs` so the owner's tab is left alone.
+The agent gets 32 Playwright MCP tools:
+
+| Group | Tools |
+|---|---|
+| Pages and tabs | `browser_navigate`, `browser_navigate_back`, `browser_tabs`, `browser_wait_for` |
+| Read the page | `browser_snapshot`, `browser_find`, `browser_take_screenshot`, `browser_console_messages`, `browser_network_requests` |
+| Act | `browser_click`, `browser_type`, `browser_fill_form`, `browser_press_key`, `browser_select_option`, `browser_hover`, `browser_drag`, `browser_handle_dialog` |
+| Mouse by coordinates | `browser_mouse_click_xy`, `browser_mouse_move_xy`, `browser_mouse_drag_xy`, `browser_mouse_wheel` |
+| Files | `browser_file_upload`, `browser_pdf_save` |
+| Scripts | `browser_evaluate`, `browser_run_code_unsafe` |
+
+### Files for agents
+
+Tool results mention files like `agent-output/page-….pdf`. The agent fetches them over HTTPS with the same token:
+
+| Request | Result |
+|---|---|
+| `GET /api/files` | List of all files |
+| `GET /files/agent-output/page-….pdf` | Download one file (PDFs, screenshots, browser downloads) |
+| `PUT /api/files/<name>` | Upload a file. The reply gives `browserPath`, which the agent passes to `browser_file_upload`. |
+ Tip for agents: call `browser_snapshot` after navigating to read the page, and open a new tab with `browser_tabs` so the owner's tab is left alone.
 
 ## Web UI
 
@@ -115,6 +151,7 @@ The agent gets the standard Playwright MCP tools: `browser_navigate`, `browser_s
 |---|---|
 | Pause agent / Resume agent | Blocks or allows agent actions. |
 | Paste | Sends this computer's clipboard text into the remote browser. Text you copy inside the remote browser arrives in your clipboard automatically. |
+| Files tab | Download files from the VPS to your computer, upload files, delete files. |
 | Panel | Shows or hides the side panel (more room for the browser). |
 | Restart browser | Restarts Chromium if it gets stuck. Tabs are restored. |
 
@@ -126,6 +163,7 @@ This app is a browser holding your logins, reachable from the internet. Treat bo
 
 - The web UI needs `UI_PASSWORD`. Eight wrong tries from one address lock that address out for 15 minutes.
 - The MCP endpoint needs `MCP_TOKEN`. Anyone who has it can act as you on every site the browser is signed in to. Give it only to agents you trust, and change it (then redeploy) if it leaks.
+- Add-ons can read every page you and the agent open. Install only ones you trust.
 - An agent reads web pages, and a web page can contain text that tries to trick an agent. Do not keep sensitive accounts (banking, main email) signed in here while agents run unattended.
 - Chromium runs with `--no-sandbox`, which is needed inside a normal Docker container. The container itself is the isolation layer, and it runs as a non-root user.
 
@@ -138,9 +176,11 @@ This app is a browser holding your logins, reachable from the internet. Treat bo
 | `PUBLIC_URL` | no | Public address, used to show the right MCP URL. |
 | `SCREEN_SIZE` | no | Starting screen size, default `1440x900`. |
 | `START_URL` | no | A page to open on every start. |
-| `MCP_EXTRA_ARGS` | no | Extra Playwright MCP options, for example `--caps vision,pdf`. |
+| `MCP_CAPS` | no | Extra agent tool groups, default `vision,pdf`. |
+| `CHROME_EXTRA_ARGS` | no | Extra Chromium command-line flags. |
+| `MCP_EXTRA_ARGS` | no | Extra Playwright MCP options, for example `--ignore-https-errors`. |
 
-Data (browser profile, downloads, agent screenshots) lives in the `browser-data` volume and survives redeploys.
+Data (browser profile, history, add-ons, downloads, agent files) lives in the `browser-data` volume and survives redeploys.
 
 ## Run locally
 

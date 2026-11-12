@@ -84,6 +84,7 @@ function renderConnect() {
   $('mcp-url').textContent = st.mcpUrl;
   $('mcp-token').textContent = st.mcpToken;
   $('mcp-qurl').textContent = `${st.mcpUrl}?token=${encodeURIComponent(st.mcpToken)}`;
+  $('files-url').textContent = st.filesUrl;
   $('mcp-json').textContent = JSON.stringify({
     mcpServers: { 'krish-browser': { type: 'http', url: st.mcpUrl, headers: { Authorization: `Bearer ${st.mcpToken}` } } },
   }, null, 2);
@@ -102,9 +103,53 @@ function listen() {
   const es = new EventSource('/api/events');
   es.addEventListener('state', (e) => { Object.assign(st, JSON.parse(e.data)); renderState(); });
   es.addEventListener('activity', (e) => addEntry(JSON.parse(e.data)));
+  es.addEventListener('files', () => { if (!$('tab-files').hidden) loadFiles(); });
   es.addEventListener('cleared', () => { $('log').textContent = ''; $('log-empty').hidden = false; });
   es.onerror = () => { fetch('/api/state').then((r) => { if (r.status === 401) location.href = '/login'; }).catch(() => {}); };
 }
+
+// ---------------------------------------------------------------- files
+function fmtSize(n) {
+  if (n < 1024) return `${n} B`;
+  const u = ['KB', 'MB', 'GB']; let i = -1;
+  do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
+  return `${n.toFixed(n < 10 ? 1 : 0)} ${u[i]}`;
+}
+const enc = (p) => p.split('/').map(encodeURIComponent).join('/');
+
+async function loadFiles() {
+  const r = await fetch('/api/files');
+  if (!r.ok) return;
+  const { files } = await r.json();
+  const ul = $('files'); ul.textContent = '';
+  $('files-empty').hidden = files.length > 0;
+  for (const f of files) {
+    const li = document.createElement('li');
+    const name = document.createElement('div'); name.className = 'name';
+    const a = document.createElement('a'); a.href = `/files/${enc(f.path)}`; a.textContent = f.path; a.download = '';
+    const meta = document.createElement('div'); meta.className = 'meta';
+    meta.textContent = `${fmtSize(f.size)} · ${new Date(f.mtime).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`;
+    name.append(a, meta);
+    const del = document.createElement('button'); del.className = 'link'; del.textContent = 'Delete';
+    del.setAttribute('aria-label', `Delete ${f.path}`);
+    del.addEventListener('click', async () => {
+      if (!confirm(`Delete ${f.path}?`)) return;
+      await fetch(`/api/files/${enc(f.path)}`, { method: 'DELETE' }); loadFiles();
+    });
+    li.append(name, del); ul.append(li);
+  }
+}
+$('btn-upload').addEventListener('click', () => $('file-input').click());
+$('file-input').addEventListener('change', async (e) => {
+  const files = [...e.target.files]; e.target.value = '';
+  for (const [i, f] of files.entries()) {
+    $('upload-status').textContent = `Uploading ${i + 1} of ${files.length}…`;
+    const r = await fetch(`/api/files/${encodeURIComponent(f.name)}`, { method: 'PUT', body: f }).catch(() => null);
+    if (!r || !r.ok) { toast(`Upload failed: ${f.name}`); break; }
+  }
+  $('upload-status').textContent = '';
+  loadFiles();
+});
 
 // ---------------------------------------------------------------- controls
 $('btn-pause').addEventListener('click', () => post('/api/pause', { paused: !st.paused }));
@@ -128,8 +173,8 @@ try { if (localStorage.getItem('kab-panel') === '0') { document.body.classList.a
 for (const tab of document.querySelectorAll('.tabs button')) {
   tab.addEventListener('click', () => {
     for (const t of document.querySelectorAll('.tabs button')) t.setAttribute('aria-selected', String(t === tab));
-    $('tab-activity').hidden = tab.dataset.tab !== 'activity';
-    $('tab-connect').hidden = tab.dataset.tab !== 'connect';
+    for (const name of ['activity', 'files', 'connect']) $('tab-' + name).hidden = tab.dataset.tab !== name;
+    if (tab.dataset.tab === 'files') loadFiles();
   });
 }
 for (const btn of document.querySelectorAll('[data-copy]')) {

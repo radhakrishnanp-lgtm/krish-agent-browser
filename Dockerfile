@@ -18,7 +18,9 @@ COPY server.js ./
 COPY public ./public
 COPY docker/rc.xml /home/node/.config/openbox/rc.xml
 
-RUN mkdir -p /data && chown -R node:node /data /home/node /app
+# Browser downloads go to /data/files, which the web UI's Files tab can list and download
+RUN mkdir -p /data/files && ln -s /data/files /home/node/Downloads \
+    && chown -R node:node /data /home/node /app && chown -h node:node /home/node/Downloads
 USER node
 
 ENV NODE_ENV=production \

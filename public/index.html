@@ -31,7 +31,8 @@
   <aside id="panel">
     <nav class="tabs" role="tablist">
       <button role="tab" data-tab="activity" aria-selected="true">Activity</button>
-      <button role="tab" data-tab="connect" aria-selected="false">Connect an agent</button>
+      <button role="tab" data-tab="files" aria-selected="false">Files</button>
+      <button role="tab" data-tab="connect" aria-selected="false">Connect</button>
     </nav>
 
     <div class="tab" id="tab-activity">
@@ -41,6 +42,17 @@
       </div>
       <ol id="log"></ol>
       <p id="log-empty" class="muted">No agent activity yet. Connect an agent and its actions will appear here while you watch them happen in the browser.</p>
+    </div>
+
+    <div class="tab" id="tab-files" hidden>
+      <p class="muted">Downloads from the remote browser and files saved by agents appear here. Upload a file to use it in the remote browser's "choose file" dialog (folder <code>Downloads</code>).</p>
+      <div class="tab-head">
+        <button id="btn-upload">Upload file</button>
+        <input id="file-input" type="file" multiple hidden>
+        <span id="upload-status" class="muted small"></span>
+      </div>
+      <ul id="files"></ul>
+      <p id="files-empty" class="muted">No files yet.</p>
     </div>
 
     <div class="tab" id="tab-connect" hidden>
@@ -53,6 +65,9 @@
       <div class="copy block"><pre id="mcp-json"></pre><button data-copy="mcp-json">Copy</button></div>
       <label>Client that only accepts a URL</label>
       <div class="copy"><code id="mcp-qurl" class="masked"></code><button data-copy="mcp-qurl">Copy</button></div>
+      <label>Files for agents (same token)</label>
+      <div class="copy"><code id="files-url"></code><button data-copy="files-url">Copy</button></div>
+      <p class="muted small">Agents can <code>GET /api/files</code> to list, <code>GET /files/&lt;path&gt;</code> to fetch a download, PDF or screenshot, and <code>PUT /api/files/&lt;name&gt;</code> to upload.</p>
       <p class="muted small">Anyone with the token can drive this browser, including sites you are signed in to. Keep it secret.</p>
       <hr>
       <button id="btn-restart">Restart browser</button>

@@ -7,6 +7,10 @@ services:
       MCP_TOKEN: ${MCP_TOKEN:?set MCP_TOKEN}
       PUBLIC_URL: ${PUBLIC_URL:-https://browser.krish.in.net}
       SCREEN_SIZE: ${SCREEN_SIZE:-1440x900}
+      START_URL: ${START_URL:-}
+      MCP_CAPS: ${MCP_CAPS:-vision,pdf}
+      CHROME_EXTRA_ARGS: ${CHROME_EXTRA_ARGS:-}
+      MCP_EXTRA_ARGS: ${MCP_EXTRA_ARGS:-}
     # Dokploy's Traefik reaches this port inside the Docker network.
     # It is NOT published on the VPS itself.
     expose:

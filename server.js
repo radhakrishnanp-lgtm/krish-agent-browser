@@ -31,6 +31,10 @@ const DISPLAY = ':1';
 const VNC_PORT = 5900;
 const CDP_PORT = 9222;
 const MCP_PORT = 8931;
+const FILES_DIR = path.join(DATA_DIR, 'files');            // browser downloads, your uploads, agent output
+const AGENT_OUT_DIR = path.join(FILES_DIR, 'agent-output');
+const CHROME_EXTRA_ARGS = (process.env.CHROME_EXTRA_ARGS || '').split(/\s+/).filter(Boolean);
+const MCP_CAPS = process.env.MCP_CAPS === undefined ? 'vision,pdf' : process.env.MCP_CAPS;
 const MANAGE_BROWSER = process.env.MANAGE_BROWSER !== '0'; // set 0 for local dev without a screen
 
 function weak(v) { return v.length < 12 || /^change-me/.test(v); }
@@ -73,6 +77,7 @@ function run(name, cmd, args, opts = {}) {
     const child = spawn(cmd, args, {
       env: { ...process.env, DISPLAY, HOME: process.env.HOME || '/home/node', ...(opts.env || {}) },
       stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: opts.cwd,
     });
     children[name] = child;
     const pipe = (s) => s.on('data', (d) => {
@@ -131,6 +136,7 @@ function chromeArgs() {
     '--disable-backgrounding-occluded-windows',
     '--disable-renderer-backgrounding',
     '--disable-features=Translate,CalculateNativeWinOcclusion',
+    ...CHROME_EXTRA_ARGS,
     ...(START_URL ? [START_URL] : []), // otherwise Chromium restores the previous tabs
   ];
 }
@@ -145,7 +151,7 @@ function clearProfileLocks() {
 
 async function startStack() {
   fs.mkdirSync(path.join(DATA_DIR, 'profile'), { recursive: true });
-  fs.mkdirSync(path.join(DATA_DIR, 'agent-output'), { recursive: true });
+  fs.mkdirSync(AGENT_OUT_DIR, { recursive: true });
   try { fs.rmSync('/tmp/.X1-lock', { force: true }); fs.rmSync('/tmp/.X11-unix/X1', { force: true }); } catch {}
 
   run('screen', 'Xvnc', [
@@ -185,12 +191,14 @@ function startMcp() {
     cli,
     '--cdp-endpoint', process.env.CDP_ENDPOINT || `http://127.0.0.1:${CDP_PORT}`,
     '--host', '127.0.0.1', '--port', String(MCP_PORT),
-    '--output-dir', path.join(DATA_DIR, 'agent-output'),
+    '--output-dir', AGENT_OUT_DIR,
+    ...(MCP_CAPS ? ['--caps', MCP_CAPS] : []),
     '--ignore-roots',
     '--snapshot-mode', 'none',   // page snapshots are returned by the browser_snapshot tool, not written to files agents cannot read
     ...extra,
   ], {
     env: { PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1' },
+    cwd: FILES_DIR, // file links in tool results become paths relative to the Files folder
     onStart: async () => { state.mcpUp = await waitTcp(MCP_PORT); publishState(); },
     onExit: () => { state.mcpUp = false; publishState(); },
   });
@@ -363,6 +371,91 @@ async function proxyMcp(req, res, url) {
   up.end(body);
 }
 
+// ---------------------------------------------------------------- files (downloads / uploads / agent output)
+function filePath(rel) {
+  const clean = path.normalize('/' + rel).slice(1);
+  if (!clean || clean.split(path.sep).some((s) => s.startsWith('.'))) return null;
+  const full = path.join(FILES_DIR, clean);
+  return full.startsWith(FILES_DIR + path.sep) ? full : null;
+}
+function listFiles() {
+  const out = [];
+  const walk = (dir, rel, depth) => {
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (e.name.startsWith('.') || out.length >= 2000) continue;
+      const full = path.join(dir, e.name), r = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) { if (depth < 4) walk(full, r, depth + 1); continue; }
+      if (!e.isFile() || /\.(crdownload|part)$/.test(e.name)) continue;
+      try { const st = fs.statSync(full); out.push({ path: r, size: st.size, mtime: st.mtimeMs }); } catch {}
+    }
+  };
+  walk(FILES_DIR, '', 0);
+  return out.sort((a, b) => b.mtime - a.mtime);
+}
+async function handleFiles(req, res, url) {
+  const p = url.pathname;
+  const viaCookie = loggedIn(req);
+  if (!viaCookie && !mcpAuthorized(req, url)) return json(res, 401, { error: 'Sign in, or send "Authorization: Bearer <MCP_TOKEN>".' });
+  fs.mkdirSync(FILES_DIR, { recursive: true });
+
+  if (p === '/api/files' && req.method === 'GET') return json(res, 200, { files: listFiles() });
+
+  let rel;
+  try { rel = decodeURIComponent(p.replace(/^\/(api\/)?files\//, '')); } catch { return json(res, 400, { error: 'Bad path' }); }
+  const full = filePath(rel);
+  if (!full) return json(res, 400, { error: 'Bad path' });
+
+  if (p.startsWith('/files/') && req.method === 'GET') {
+    let st;
+    try { st = fs.statSync(full); if (!fs.realpathSync(full).startsWith(fs.realpathSync(FILES_DIR) + path.sep)) throw 0; } catch { return json(res, 404, { error: 'No such file' }); }
+    if (!st.isFile()) return json(res, 404, { error: 'No such file' });
+    res.writeHead(200, {
+      ...SEC_HEADERS, 'Content-Type': 'application/octet-stream', 'Content-Length': st.size, 'Cache-Control': 'no-store',
+      'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(path.basename(full))}`,
+    });
+    return fs.createReadStream(full).pipe(res);
+  }
+  if (p.startsWith('/api/files/') && req.method === 'PUT') {
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    const tmp = `${full}.part`;
+    const ws = fs.createWriteStream(tmp);
+    let size = 0, failed = false;
+    const fail = (status, msg) => { if (failed) return; failed = true; ws.destroy(); fs.rm(tmp, { force: true }, () => {}); json(res, status, { error: msg }); };
+    req.on('data', (c) => { size += c.length; if (size > MAX_UPLOAD) { fail(413, 'File too large'); req.destroy(); } });
+    req.on('error', () => fail(400, 'Upload interrupted'));
+    req.on('aborted', () => fail(400, 'Upload interrupted'));
+    ws.on('error', () => fail(500, 'Could not save file'));
+    ws.on('finish', () => {
+      if (failed) return;
+      fs.rename(tmp, full, (e) => {
+        if (e) return fail(500, 'Could not save file');
+        publish('files', {});
+        json(res, 200, { path: path.relative(FILES_DIR, full), size, browserPath: full });
+      });
+    });
+    return req.pipe(ws);
+  }
+  if (p.startsWith('/api/files/') && req.method === 'DELETE') {
+    if (!viaCookie) return json(res, 403, { error: 'Only the owner can delete files' });
+    try { fs.rmSync(full, { force: true }); } catch {}
+    publish('files', {});
+    return json(res, 200, { ok: true });
+  }
+  return json(res, 405, { error: 'Method not allowed' });
+}
+const MAX_UPLOAD = 2 * 1024 * 1024 * 1024;
+let filesTimer = null;
+function watchFiles() {
+  try {
+    fs.watch(FILES_DIR, { recursive: true }, () => {
+      clearTimeout(filesTimer);
+      filesTimer = setTimeout(() => publish('files', {}), 800);
+    }).on('error', () => {});
+  } catch {}
+}
+
 // ---------------------------------------------------------------- routes
 const server = http.createServer(async (req, res) => {
   let url;
@@ -373,6 +466,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/healthz') return json(res, 200, { ok: true });
 
     if (p === '/mcp' || p === '/sse') return await proxyMcp(req, res, url);
+    if (p === '/api/files' || p.startsWith('/api/files/') || p.startsWith('/files/')) return await handleFiles(req, res, url);
 
     if (p === '/login' && req.method === 'GET') {
       if (loggedIn(req)) return send(res, 302, '', { Location: '/' });
@@ -411,7 +505,7 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/state' && req.method === 'GET') {
       const base = PUBLIC_URL || `${isHttps(req) ? 'https' : 'http'}://${req.headers.host}`;
-      return json(res, 200, { ...state, viewers, activity, mcpUrl: `${base}/mcp`, mcpToken: MCP_TOKEN });
+      return json(res, 200, { ...state, viewers, activity, mcpUrl: `${base}/mcp`, filesUrl: `${base}/files`, filesDir: FILES_DIR, mcpToken: MCP_TOKEN });
     }
     if (p === '/api/events' && req.method === 'GET') {
       res.writeHead(200, { ...SEC_HEADERS, 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
@@ -477,6 +571,8 @@ server.on('upgrade', (req, socket, head) => {
 });
 
 // ---------------------------------------------------------------- boot
+fs.mkdirSync(AGENT_OUT_DIR, { recursive: true });
+watchFiles();
 server.listen(PORT, '0.0.0.0', () => log(`web UI + MCP listening on :${PORT}`));
 if (MANAGE_BROWSER) startStack().catch((e) => { log('startup failed', e); process.exit(1); });
 else startMcp();
