@@ -90,3 +90,7 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 18px 0 14px; }
 #tools details { margin-top: 4px; font-size: 12px; color: var(--muted); }
 #tools pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0 0; color: var(--text); }
 #tab-connect a { color: #58a6ff; }
+
+#dropzone { position: absolute; inset: 8px; display: grid; place-items: center; border: 2px dashed var(--accent); border-radius: 10px; background: rgba(31, 111, 235, .18); color: #fff; font-size: 18px; font-weight: 600; pointer-events: none; z-index: 5; }
+#dropzone[hidden] { display: none; }
+#paste-trap { position: absolute; left: -9999px; top: 0; width: 1px; height: 1px; opacity: 0; }

@@ -16,7 +16,7 @@
   </div>
   <div class="spacer"></div>
   <button id="btn-pause" class="primary" title="Stop agents from acting while you use the browser">Pause agent</button>
-  <button id="btn-paste" title="Send text from this computer's clipboard into the remote browser">Paste</button>
+  <button id="btn-paste" title="Paste what you copied on this computer (text or image) into the remote browser. Ctrl+V works too.">Paste</button>
   <button id="btn-panel" title="Show or hide the side panel" aria-expanded="true">Panel</button>
 </header>
 
@@ -32,6 +32,8 @@
   <section id="stage" aria-label="Live browser">
     <div id="screen"></div>
     <div id="overlay">Connecting to the browser…</div>
+    <div id="dropzone" hidden>Drop to put it into the remote browser</div>
+    <textarea id="paste-trap" tabindex="-1" aria-hidden="true"></textarea>
   </section>
 
   <aside id="panel">

@@ -19,10 +19,12 @@ for (const p of ['/api/state', '/api/events', '/api/tools', '/api/files', '/file
   r = await get(p);
   check(`No access without login: GET ${p}`, [401, 302].includes(r.status), `status ${r.status}`);
 }
-for (const p of ['/api/pause', '/api/restart-browser', '/api/help-done', '/api/clear-activity']) {
+for (const p of ['/api/pause', '/api/restart-browser', '/api/help-done', '/api/clear-activity', '/api/clipboard', '/api/drop']) {
   r = await get(p, { method: 'POST', headers: jsonHeaders, body: '{}' });
   check(`No access without login: POST ${p}`, [401, 302].includes(r.status), `status ${r.status}`);
 }
+r = await get('/api/clipboard', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: 'x' });
+check('No clipboard access without login', [401, 302].includes(r.status), `status ${r.status}`);
 r = await get('/api/files/evil.txt', { method: 'PUT', body: 'x' });
 check('No upload without login', r.status === 401, `status ${r.status}`);
 r = await get('/api/tools/anything', { method: 'DELETE' });

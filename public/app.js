@@ -37,20 +37,117 @@ function connectScreen() {
   });
 }
 
-// this computer's clipboard -> remote browser, then Ctrl+V there
-$('btn-paste').addEventListener('click', async () => {
+// ---------------------------------------------------------------- copy / paste / drag and drop from this computer
+function remotePaste() {
   if (!rfb) return;
-  let text = '';
-  try { text = await navigator.clipboard.readText(); }
-  catch { text = prompt('Paste the text to send into the remote browser:') || ''; }
-  if (!text) return;
-  rfb.clipboardPasteFrom(text);
   rfb.focus();
   setTimeout(() => {
     rfb.sendKey(0xffe3, 'ControlLeft', true);
     rfb.sendKey(0x0076, 'KeyV');
     rfb.sendKey(0xffe3, 'ControlLeft', false);
-  }, 150);
+  }, 120);
+}
+function uploadFile(file, label) {
+  // PUT with progress, into the shared Files folder under uploads/
+  return new Promise((resolve, reject) => {
+    const name = (file.name || 'pasted-file').replace(/[\/\\]/g, '_').replace(/^\.+/, '') || 'file';
+    const x = new XMLHttpRequest();
+    x.open('PUT', `/api/files/uploads/${encodeURIComponent(name)}`);
+    x.upload.onprogress = (e) => { if (e.lengthComputable) status(`${label} ${name}: ${Math.round((e.loaded / e.total) * 100)}%`); };
+    x.onload = () => { try { x.status === 200 ? resolve(JSON.parse(x.responseText).path) : reject(new Error(JSON.parse(x.responseText).error)); } catch { reject(new Error('upload failed')); } };
+    x.onerror = () => reject(new Error('upload failed'));
+    x.send(file);
+  });
+}
+function status(msg) { const t = $('toast'); clearTimeout(toastTimer); t.textContent = msg; t.hidden = false; }
+async function uploadAll(files, label) {
+  const paths = [];
+  for (const f of files) paths.push(await uploadFile(f, label));
+  return paths;
+}
+
+// Whatever was copied on this computer (text, image, files) goes to the remote clipboard, then Ctrl+V there.
+async function sendToRemoteClipboard({ files = [], text = '' }) {
+  try {
+    if (files.length === 1 && files[0].type === 'image/png' && files[0].size < 30 * 1024 * 1024) {
+      const r = await fetch('/api/clipboard', { method: 'POST', headers: { 'Content-Type': 'image/png' }, body: files[0] });
+      if (!r.ok) throw new Error((await r.json()).error);
+    } else if (files.length) {
+      const paths = await uploadAll(files, 'Pasting');
+      const r = await post('/api/clipboard', { files: paths });
+      if (!r.ok) throw new Error((await r.json()).error);
+      toast(`Pasted ${files.length} file${files.length > 1 ? 's' : ''} (also saved in Files → uploads)`);
+    } else if (text) {
+      const r = await fetch('/api/clipboard', { method: 'POST', headers: { 'Content-Type': 'text/plain; charset=utf-8' }, body: text });
+      if (!r.ok) throw new Error((await r.json()).error);
+    } else return;
+    remotePaste();
+  } catch (e) { toast(`Paste failed: ${e.message}`); }
+}
+
+// Ctrl+V / Cmd+V while the remote screen has focus: let this browser fire a real "paste" event
+// on a hidden box, so we receive text, images and copied files without any permission prompt.
+const trap = $('paste-trap');
+const screenFocused = () => $('screen').contains(document.activeElement);
+window.addEventListener('keydown', (e) => {
+  if (!rfb || !(e.ctrlKey || e.metaKey) || e.altKey || e.key.toLowerCase() !== 'v' || !screenFocused()) return;
+  e.stopImmediatePropagation();   // noVNC must not swallow it; the default action (paste) still happens
+  trap.value = '';
+  trap.focus();
+}, true);
+trap.addEventListener('paste', (e) => {
+  e.preventDefault();
+  const files = [...e.clipboardData.files];
+  const text = e.clipboardData.getData('text/plain');
+  if (rfb) rfb.focus();
+  sendToRemoteClipboard({ files, text });
+});
+trap.addEventListener('blur', () => { trap.value = ''; });
+
+// Paste button (for touch devices and when the keyboard shortcut is not available)
+$('btn-paste').addEventListener('click', async () => {
+  if (!rfb) return;
+  try {
+    const items = await navigator.clipboard.read();
+    const files = []; let text = '';
+    for (const it of items) {
+      const img = it.types.find((t) => t.startsWith('image/'));
+      if (img) { const b = await it.getType(img); files.push(new File([b], `pasted-image.${img.split('/')[1]}`, { type: img })); }
+      else if (it.types.includes('text/plain')) text = await (await it.getType('text/plain')).text();
+    }
+    return sendToRemoteClipboard({ files, text });
+  } catch {
+    const text = prompt('Paste the text to send into the remote browser:') || '';
+    if (text) sendToRemoteClipboard({ text });
+  }
+});
+
+// Drag files or text from this computer onto the remote browser
+const stage = $('stage');
+let dragDepth = 0;
+const hasPayload = (e) => e.dataTransfer && [...e.dataTransfer.types].some((t) => t === 'Files' || t === 'text/plain' || t === 'text/uri-list');
+stage.addEventListener('dragenter', (e) => { if (!hasPayload(e)) return; e.preventDefault(); dragDepth++; $('dropzone').hidden = false; });
+stage.addEventListener('dragover', (e) => { if (!hasPayload(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+stage.addEventListener('dragleave', () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) $('dropzone').hidden = true; });
+stage.addEventListener('drop', async (e) => {
+  if (!hasPayload(e)) return;
+  e.preventDefault();
+  dragDepth = 0; $('dropzone').hidden = true;
+  const files = [...e.dataTransfer.files];
+  const text = files.length ? '' : (e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain'));
+  // where on the remote screen the drop happened
+  const canvas = $('screen').querySelector('canvas');
+  const box = (canvas || stage).getBoundingClientRect();
+  const x = (e.clientX - box.left) * (canvas ? canvas.width / box.width : 1);
+  const y = (e.clientY - box.top) * (canvas ? canvas.height / box.height : 1);
+  try {
+    const paths = await uploadAll(files, 'Uploading');
+    const r = await post('/api/drop', { x, y, files: paths, text });
+    if (r.ok) toast(files.length ? `Dropped ${files.length} file${files.length > 1 ? 's' : ''} into the page` : 'Dropped');
+    else if (files.length) toast('Saved in Files → uploads. This spot does not accept drops: use the site\'s upload button and pick it from Downloads/uploads.');
+    else toast('This spot does not accept drops');
+    if (rfb) rfb.focus();
+  } catch (err) { toast(`Drop failed: ${err.message}`); }
 });
 
 // ---------------------------------------------------------------- state

@@ -172,12 +172,24 @@ Tool results mention files like `agent-output/page-….pdf`. Besides the file to
 | Button | What it does |
 |---|---|
 | Pause agent / Resume agent | Blocks or allows agent actions. |
-| Paste | Sends this computer's clipboard text into the remote browser. Text you copy inside the remote browser arrives in your clipboard automatically. |
+| Paste | Same as `Ctrl+V`, for touch screens. |
 | Files tab | Download files from the VPS to your computer, upload files, delete files. |
 | Panel | Shows or hides the side panel (more room for the browser). |
 | Restart browser | Restarts Chromium if it gets stuck. Tabs are restored. |
 
 The remote browser resizes itself to fit your window.
+
+### Copy, paste and drag and drop between your computer and the remote browser
+
+| You do this on your computer | What happens in the remote browser |
+|---|---|
+| Copy text, then `Ctrl+V` (`Cmd+V` on Mac) on the remote screen | The text is pasted. All languages work. |
+| Copy an image or take a screenshot, then `Ctrl+V` | The image is pasted (chat boxes, editors, image fields). |
+| Copy a file in your file manager (video, PDF, anything), then `Ctrl+V` | The file is uploaded and pasted as a file. It is also kept in **Files → uploads**. |
+| Drag files (or selected text) from your computer onto the remote screen | They are dropped at that exact spot in the page, for example on a site's "drop files here" area. Big files show upload progress. |
+| Copy text inside the remote browser (`Ctrl+C`) | It arrives in your computer's clipboard. |
+
+Notes: if the spot does not accept drops, the file is still saved in **Files → uploads**, so you can pick it with the site's upload button. Images and files copied *inside* the remote browser do not come back through the clipboard; download them and use the **Files** tab. Copy back to your computer needs HTTPS, which you have on your domain.
 
 ## Security
 

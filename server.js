@@ -15,7 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
-const { WebSocketServer } = require('ws');
+const { WebSocketServer, WebSocket } = require('ws');
 const { createAgentTools } = require('./agent-tools');
 
 // ---------------------------------------------------------------- config
@@ -538,6 +538,70 @@ function watchFiles() {
   } catch {}
 }
 
+// ---------------------------------------------------------------- clipboard + drag and drop from the owner's computer
+// Puts text, an image, or a list of files on the remote browser's clipboard (the owner then pastes with Ctrl+V).
+function setRemoteClipboard(type, data) {
+  return new Promise((resolve, reject) => {
+    const args = ['-selection', 'clipboard', '-i'];
+    if (type) args.push('-t', type);
+    const x = spawn('xclip', args, { env: { ...CHILD_ENV, DISPLAY }, stdio: ['pipe', 'ignore', 'ignore'] });
+    const timer = setTimeout(() => { x.kill(); reject(new Error('clipboard timeout')); }, 5000);
+    x.on('error', (e) => { clearTimeout(timer); reject(e); });
+    x.on('exit', (code) => { clearTimeout(timer); code === 0 ? resolve() : reject(new Error(`xclip exited ${code}`)); });
+    x.stdin.on('error', () => {});
+    x.stdin.end(data);
+  });
+}
+function sharedFiles(list) {
+  const out = [];
+  for (const rel of Array.isArray(list) ? list.slice(0, 50) : []) {
+    const full = filePath(String(rel));
+    try { if (full && fs.statSync(full).isFile()) out.push(full); } catch {}
+  }
+  return out;
+}
+const fileUri = (full) => 'file://' + full.split('/').map(encodeURIComponent).join('/');
+
+// Minimal Chrome DevTools Protocol call on one tab
+function cdpSession(wsUrl, work, timeout = 8000) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsUrl, { perMessageDeflate: false });
+    const pending = new Map(); let id = 0, done = false;
+    const finish = (err, v) => { if (done) return; done = true; clearTimeout(timer); try { ws.close(); } catch {} err ? reject(err) : resolve(v); };
+    const timer = setTimeout(() => finish(new Error('browser did not answer')), timeout);
+    const send = (method, params = {}) => new Promise((res, rej) => { const n = ++id; pending.set(n, { res, rej }); ws.send(JSON.stringify({ id: n, method, params })); });
+    ws.on('open', () => work(send).then((v) => finish(null, v), (e) => finish(e)));
+    ws.on('message', (d) => {
+      let m; try { m = JSON.parse(d.toString()); } catch { return; }
+      const p = pending.get(m.id); if (!p) return; pending.delete(m.id);
+      m.error ? p.rej(new Error(m.error.message)) : p.res(m.result);
+    });
+    ws.on('error', (e) => finish(e));
+  });
+}
+// The tab the owner is looking at, and where its page area sits on the remote screen
+async function visibleTab() {
+  const list = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`)).json();
+  const pages = list.filter((t) => t.type === 'page' && t.webSocketDebuggerUrl && !/^(devtools|chrome-extension):/.test(t.url)).slice(0, 40);
+  const expr = 'JSON.stringify({ v: document.visibilityState === "visible", f: document.hasFocus(), left: window.screenX + Math.max(0, (window.outerWidth - window.innerWidth) / 2), top: window.screenY + (window.outerHeight - window.innerHeight), w: window.innerWidth, h: window.innerHeight })';
+  const infos = await Promise.all(pages.map((t) => cdpSession(t.webSocketDebuggerUrl, async (send) => {
+    const r = await send('Runtime.evaluate', { expression: expr, returnByValue: true });
+    return { ...JSON.parse(r.result.value), ws: t.webSocketDebuggerUrl };
+  }, 2000).catch(() => null)));
+  const ok = infos.filter(Boolean);
+  return ok.find((i) => i.v && i.f) || ok.find((i) => i.v) || null;
+}
+async function dropOnRemote({ x, y, files, text }) {
+  const tab = await visibleTab();
+  if (!tab) throw new Error('No visible tab');
+  const px = Math.round(x - tab.left), py = Math.round(y - tab.top);
+  if (px < 0 || py < 0 || px > tab.w || py > tab.h) throw new Error('outside the page');
+  const data = { items: text ? [{ mimeType: 'text/plain', data: text }] : [], files, dragOperationsMask: 1 };
+  await cdpSession(tab.ws, async (send) => {
+    for (const type of ['dragEnter', 'dragOver', 'drop']) await send('Input.dispatchDragEvent', { type, x: px, y: py, data });
+  });
+}
+
 const agentTools = createAgentTools({
   dataDir: DATA_DIR, filesDir: FILES_DIR, filePath, listFiles, playbookPath: PLAYBOOK_PATH,
   upstreamCall, state, publishState, publish, searxngUrl: SEARXNG_URL,
@@ -614,15 +678,38 @@ const server = http.createServer(async (req, res) => {
       req.on('close', () => { clearInterval(ping); sseClients.delete(res); });
       return;
     }
+    if (p === '/api/clipboard' && req.method === 'POST' && !/^application\/json/.test(req.headers['content-type'] || '')) {
+      // raw text or a PNG image copied on the owner's computer
+      const type = (req.headers['content-type'] || '').split(';')[0].trim();
+      if (type !== 'text/plain' && type !== 'image/png') return json(res, 415, { error: 'Only text or PNG' });
+      let data;
+      try { data = await readBody(req, 30 * 1024 * 1024); } catch { return json(res, 413, { error: 'Too large to paste. Drop it as a file instead.' }); }
+      try { await setRemoteClipboard(type === 'image/png' ? 'image/png' : null, data); } catch (e) { return json(res, 500, { error: 'Could not set the remote clipboard' }); }
+      return json(res, 200, { ok: true });
+    }
     if (p.startsWith('/api/') && req.method === 'POST') {
       if (!/^application\/json/.test(req.headers['content-type'] || '')) return json(res, 415, { error: 'JSON only' });
       let data = {};
-      try { data = JSON.parse((await readBody(req, 4096)).toString('utf8') || '{}'); } catch {}
+      try { data = JSON.parse((await readBody(req, 512 * 1024)).toString('utf8') || '{}'); } catch {}
       if (p === '/api/pause') {
         state.paused = !!data.paused;
         addActivity({ kind: 'owner', client: 'you', detail: state.paused ? 'paused the agent' : 'resumed the agent' });
         publishState();
         return json(res, 200, { paused: state.paused });
+      }
+      if (p === '/api/clipboard') {
+        // files already uploaded to the Files folder, put on the remote clipboard as "copied files"
+        const files = sharedFiles(data.files);
+        if (!files.length) return json(res, 400, { error: 'No files' });
+        try { await setRemoteClipboard('text/uri-list', files.map(fileUri).join('\r\n') + '\r\n'); } catch { return json(res, 500, { error: 'Could not set the remote clipboard' }); }
+        return json(res, 200, { ok: true });
+      }
+      if (p === '/api/drop') {
+        const files = sharedFiles(data.files);
+        const text = typeof data.text === 'string' ? data.text.slice(0, 200000) : '';
+        if (!files.length && !text) return json(res, 400, { error: 'Nothing to drop' });
+        try { await dropOnRemote({ x: Number(data.x), y: Number(data.y), files, text }); return json(res, 200, { ok: true }); }
+        catch (e) { return json(res, 409, { error: e.message }); }
       }
       if (p === '/api/help-done') {
         if (state.help) addActivity({ kind: 'owner', client: 'you', detail: 'answered the agent\'s request' });

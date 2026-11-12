@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       tigervnc-standalone-server \
       openbox \
       novnc \
+      xclip \
       fonts-liberation fonts-noto-core fonts-noto-color-emoji \
       ca-certificates tini \
     && rm -rf /var/lib/apt/lists/*
