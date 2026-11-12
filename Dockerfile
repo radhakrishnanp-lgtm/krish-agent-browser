@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
-COPY server.js ./
+COPY server.js agent-tools.js AGENT_PLAYBOOK.md ./
 COPY public ./public
 COPY docker/rc.xml /home/node/.config/openbox/rc.xml
 

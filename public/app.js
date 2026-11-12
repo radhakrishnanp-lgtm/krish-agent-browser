@@ -61,6 +61,12 @@ function renderState() {
   b.textContent = st.paused ? 'Resume agent' : 'Pause agent';
   b.classList.toggle('paused', !!st.paused);
   $('banner').hidden = !st.paused;
+  const hadHelp = !$('help').hidden;
+  $('help').hidden = !st.help;
+  if (st.help) {
+    $('help-msg').textContent = `${st.help.message} (${st.help.client})`;
+    if (!hadHelp) { toast('The agent is asking for your help'); document.title = '(!) Agent Browser'; }
+  } else { document.title = 'Agent Browser'; if (hadHelp) $('help-reply').value = ''; }
 }
 
 function fmtTime(ms) { return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }); }
@@ -104,6 +110,7 @@ function listen() {
   es.addEventListener('state', (e) => { Object.assign(st, JSON.parse(e.data)); renderState(); });
   es.addEventListener('activity', (e) => addEntry(JSON.parse(e.data)));
   es.addEventListener('files', () => { if (!$('tab-files').hidden) loadFiles(); });
+  es.addEventListener('tools', loadTools);
   es.addEventListener('cleared', () => { $('log').textContent = ''; $('log-empty').hidden = false; });
   es.onerror = () => { fetch('/api/state').then((r) => { if (r.status === 401) location.href = '/login'; }).catch(() => {}); };
 }
@@ -151,6 +158,36 @@ $('file-input').addEventListener('change', async (e) => {
   loadFiles();
 });
 
+// ---------------------------------------------------------------- tools made by agents
+async function loadTools() {
+  const r = await fetch('/api/tools');
+  if (!r.ok) return;
+  const { tools } = await r.json();
+  const ul = $('tools'); ul.textContent = '';
+  $('tools-empty').hidden = tools.length > 0;
+  for (const t of tools) {
+    const li = document.createElement('li');
+    const row = document.createElement('div'); row.className = 'row';
+    const name = document.createElement('span'); name.className = 'tname'; name.textContent = `x_${t.name}`;
+    const del = document.createElement('button'); del.className = 'link'; del.textContent = 'Delete';
+    del.setAttribute('aria-label', `Delete tool ${t.name}`);
+    del.addEventListener('click', async () => {
+      if (!confirm(`Delete the agent tool x_${t.name}?`)) return;
+      await fetch(`/api/tools/${encodeURIComponent(t.name)}`, { method: 'DELETE' }); loadTools();
+    });
+    row.append(name, del);
+    const desc = document.createElement('div'); desc.className = 'muted small'; desc.textContent = t.description;
+    const det = document.createElement('details');
+    const sum = document.createElement('summary'); sum.textContent = 'Show code';
+    const pre = document.createElement('pre'); pre.textContent = t.code;
+    det.append(sum, pre);
+    li.append(row, desc, det); ul.append(li);
+  }
+}
+
+$('btn-help-done').addEventListener('click', () => post('/api/help-done', { reply: $('help-reply').value }));
+$('help-reply').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btn-help-done').click(); });
+
 // ---------------------------------------------------------------- controls
 $('btn-pause').addEventListener('click', () => post('/api/pause', { paused: !st.paused }));
 $('btn-clear').addEventListener('click', () => post('/api/clear-activity'));
@@ -185,5 +222,6 @@ for (const btn of document.querySelectorAll('[data-copy]')) {
 }
 
 await loadState();
+loadTools();
 listen();
 connectScreen();

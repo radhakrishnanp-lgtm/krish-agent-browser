@@ -22,6 +22,12 @@
 
 <div id="banner" hidden>Agent is paused. Agents cannot click or type until you resume.</div>
 
+<div id="help" hidden>
+  <div class="help-text"><strong>The agent needs you:</strong> <span id="help-msg"></span></div>
+  <input id="help-reply" type="text" placeholder="Optional reply to the agent" aria-label="Reply to the agent">
+  <button id="btn-help-done" class="primary">Done</button>
+</div>
+
 <main>
   <section id="stage" aria-label="Live browser">
     <div id="screen"></div>
@@ -68,6 +74,11 @@
       <label>Files for agents (same token)</label>
       <div class="copy"><code id="files-url"></code><button data-copy="files-url">Copy</button></div>
       <p class="muted small">Agents can <code>GET /api/files</code> to list, <code>GET /files/&lt;path&gt;</code> to fetch a download, PDF or screenshot, and <code>PUT /api/files/&lt;name&gt;</code> to upload.</p>
+      <label>Agent playbook</label>
+      <p class="muted small">Agents read it with the <code>agent_playbook</code> tool. <a href="/playbook" target="_blank" rel="noopener">Open the playbook</a></p>
+      <label>Tools made by agents</label>
+      <ul id="tools"></ul>
+      <p id="tools-empty" class="muted small">None yet. Agents can save their own reusable tools; they appear here and you can delete them.</p>
       <p class="muted small">Anyone with the token can drive this browser, including sites you are signed in to. Keep it secret.</p>
       <hr>
       <button id="btn-restart">Restart browser</button>

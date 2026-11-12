@@ -123,7 +123,22 @@ claude mcp add --transport http krish-browser https://browser.krish.in.net/mcp -
 
 A client that only accepts a URL: `https://browser.krish.in.net/mcp?token=YOUR_MCP_TOKEN`
 
-The agent gets 32 Playwright MCP tools:
+The agent gets 45 tools. On connect it is told to call `agent_playbook` first.
+
+**Added by this app**
+
+| Tool | What it does |
+|---|---|
+| `agent_playbook` | The rules and how-to for this browser ([AGENT_PLAYBOOK.md](AGENT_PLAYBOOK.md)). |
+| `deep_search` | Research in one call: several searches, reads the top pages in parallel, returns text with sources. |
+| `web_search` | Search results (titles, URLs, snippets) without touching the browser. |
+| `web_fetch` | Readable text of a public page, without touching the browser. |
+| `page_text` | Readable text of the current tab (after JavaScript, with your logins). Far smaller than a snapshot. |
+| `files_list`, `file_read`, `file_write` | Shared Files folder: downloads, reports, and the agent's own notes (`notes/`), which give it a memory between sessions. |
+| `ask_owner` | The agent asks you for help (login, CAPTCHA, 2FA, a decision). A blue bar appears above the browser; you act, optionally type a reply, press **Done**. |
+| `custom_tool_save`, `custom_tool_list`, `custom_tool_delete`, `custom_tool_run` | The agent builds its own reusable tools (Playwright code). Saved tools appear as `x_<name>` in every later session. |
+
+**Playwright browser tools (32)**
 
 | Group | Tools |
 |---|---|
@@ -134,16 +149,23 @@ The agent gets 32 Playwright MCP tools:
 | Files | `browser_file_upload`, `browser_pdf_save` |
 | Scripts | `browser_evaluate`, `browser_run_code_unsafe` |
 
+### Agents that make their own tools
+
+When an agent needs something that does not exist, it writes a small Playwright function and saves it with `custom_tool_save`. From then on every agent that connects can call it. You see each saved tool, with its code, under **Connect → Tools made by agents**, and can delete it there.
+
+### Search
+
+`web_search` and `deep_search` use DuckDuckGo, then Bing, with no API key. If those block your VPS address, deploy your own [SearXNG](https://docs.searxng.org) (enable its JSON format) and set `SEARXNG_URL`.
+
 ### Files for agents
 
-Tool results mention files like `agent-output/page-….pdf`. The agent fetches them over HTTPS with the same token:
+Tool results mention files like `agent-output/page-….pdf`. Besides the file tools, the agent can fetch them over HTTPS with the same token:
 
 | Request | Result |
 |---|---|
 | `GET /api/files` | List of all files |
 | `GET /files/agent-output/page-….pdf` | Download one file (PDFs, screenshots, browser downloads) |
 | `PUT /api/files/<name>` | Upload a file. The reply gives `browserPath`, which the agent passes to `browser_file_upload`. |
- Tip for agents: call `browser_snapshot` after navigating to read the page, and open a new tab with `browser_tabs` so the owner's tab is left alone.
 
 ## Web UI
 
@@ -159,9 +181,15 @@ The remote browser resizes itself to fit your window.
 
 ## Security
 
+Full test results, fixes and remaining risks: [SECURITY.md](SECURITY.md). Check your live site any time with:
+
+```bash
+node scripts/security-check.mjs https://browser.krish.in.net
+```
+
 This app is a browser holding your logins, reachable from the internet. Treat both secrets like bank passwords.
 
-- The web UI needs `UI_PASSWORD`. Eight wrong tries from one address lock that address out for 15 minutes.
+- The web UI needs `UI_PASSWORD`. Eight wrong tries from one address lock that address out for 15 minutes; 40 wrong tries in total lock the login for everyone for 15 minutes.
 - The MCP endpoint needs `MCP_TOKEN`. Anyone who has it can act as you on every site the browser is signed in to. Give it only to agents you trust, and change it (then redeploy) if it leaks.
 - Add-ons can read every page you and the agent open. Install only ones you trust.
 - An agent reads web pages, and a web page can contain text that tries to trick an agent. Do not keep sensitive accounts (banking, main email) signed in here while agents run unattended.
@@ -176,6 +204,7 @@ This app is a browser holding your logins, reachable from the internet. Treat bo
 | `PUBLIC_URL` | no | Public address, used to show the right MCP URL. |
 | `SCREEN_SIZE` | no | Starting screen size, default `1440x900`. |
 | `START_URL` | no | A page to open on every start. |
+| `SEARXNG_URL` | no | Address of your own SearXNG, used first by the search tools. |
 | `MCP_CAPS` | no | Extra agent tool groups, default `vision,pdf`. |
 | `CHROME_EXTRA_ARGS` | no | Extra Chromium command-line flags. |
 | `MCP_EXTRA_ARGS` | no | Extra Playwright MCP options, for example `--ignore-https-errors`. |

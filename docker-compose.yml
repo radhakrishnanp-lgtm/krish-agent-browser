@@ -11,6 +11,7 @@ services:
       MCP_CAPS: ${MCP_CAPS:-vision,pdf}
       CHROME_EXTRA_ARGS: ${CHROME_EXTRA_ARGS:-}
       MCP_EXTRA_ARGS: ${MCP_EXTRA_ARGS:-}
+      SEARXNG_URL: ${SEARXNG_URL:-}
     # Dokploy's Traefik reaches this port inside the Docker network.
     # It is NOT published on the VPS itself.
     expose:
