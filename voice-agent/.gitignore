@@ -1,0 +1,6 @@
+.env
+logs/sessions/*
+!logs/sessions/.gitkeep
+__pycache__/
+*.pyc
+.venv/

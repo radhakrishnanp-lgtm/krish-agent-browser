@@ -1,0 +1,8 @@
+# One entry per API provider. Keys are read from the environment (.env), never from this file.
+providers:
+  isoquant:
+    base_url: https://api.isoquant.ai/v1
+    api_key_env: ISOQUANT_API_KEY
+  openrouter:
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY

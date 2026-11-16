@@ -1,0 +1,55 @@
+# Model presets. Pick the active one in default.yaml (active_preset) or with VOICE_AGENT_PRESET.
+# Each stage needs: provider (from providers.yaml) and model. Every model used here
+# should have a rate in pricing.yaml.
+#
+# llm.extra is merged into the chat-completions request body as-is.
+presets:
+  default:
+    llm:
+      provider: isoquant
+      model: deepseek-v4.1-flash-1017-fast
+      max_tokens: 400
+      extra:
+        reasoning_effort: none
+        include_reasoning: false
+    stt:
+      provider: openrouter
+      model: openai/whisper-1
+    tts:
+      provider: openrouter
+      model: hexgrad/kokoro-82m
+      voice: af_heart
+
+  # Same LLM, cheaper and faster speech-to-text.
+  low-cost:
+    llm:
+      provider: isoquant
+      model: deepseek-v4.1-flash-1017-fast
+      max_tokens: 400
+      extra:
+        reasoning_effort: none
+        include_reasoning: false
+    stt:
+      provider: openrouter
+      model: openai/whisper-large-v3-turbo
+    tts:
+      provider: openrouter
+      model: hexgrad/kokoro-82m
+      voice: af_heart
+
+  # Everything through OpenRouter (works with only OPENROUTER_API_KEY set).
+  openrouter-only:
+    llm:
+      provider: openrouter
+      model: deepseek/deepseek-v4.1-flash-1017
+      max_tokens: 400
+      extra:
+        reasoning:
+          enabled: false
+    stt:
+      provider: openrouter
+      model: openai/whisper-large-v3-turbo
+    tts:
+      provider: openrouter
+      model: hexgrad/kokoro-82m
+      voice: af_heart

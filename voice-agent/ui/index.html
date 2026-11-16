@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voice Agent</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="statusbar">
+  <div class="conn"><span id="connDot" class="dot off"></span><span id="connText">Connecting…</span></div>
+  <div class="chip"><label>LLM</label><span id="mLlm">–</span></div>
+  <div class="chip"><label>STT</label><span id="mStt">–</span></div>
+  <div class="chip"><label>TTS</label><span id="mTts">–</span></div>
+  <div class="chip"><label>Preset</label><select id="preset" title="Switch model preset"></select></div>
+  <div class="total"><label>Session cost</label><span id="hdrCost">$0.000000</span></div>
+</header>
+
+<div id="banner" class="banner" hidden></div>
+
+<main>
+  <section class="conversation">
+    <div class="stage">
+      <div id="orb" class="orb idle"></div>
+      <div id="state" class="state">Idle</div>
+      <button id="micBtn" class="primary">Start microphone</button>
+    </div>
+    <div id="transcript" class="transcript" aria-live="polite">
+      <p class="empty">Press “Start microphone” and speak, or type a message below.</p>
+    </div>
+    <form id="textForm" class="textform">
+      <input id="textInput" type="text" placeholder="Type instead of speaking…" autocomplete="off">
+      <button type="submit">Send</button>
+    </form>
+  </section>
+
+  <aside>
+    <section class="panel">
+      <h2>Cost</h2>
+      <table class="cost">
+        <thead><tr><th></th><th>This turn</th><th>Session</th></tr></thead>
+        <tbody>
+          <tr><td>LLM</td><td id="tLlm">–</td><td id="sLlm">–</td></tr>
+          <tr><td>STT</td><td id="tStt">–</td><td id="sStt">–</td></tr>
+          <tr><td>TTS</td><td id="tTts">–</td><td id="sTts">–</td></tr>
+          <tr class="sum"><td>Total</td><td id="tTot">–</td><td id="sTot">–</td></tr>
+        </tbody>
+      </table>
+      <p id="usage" class="muted">No turns yet.</p>
+      <div id="budgetWrap" hidden>
+        <div class="bar"><div id="budgetBar"></div></div>
+        <p id="budgetText" class="muted"></p>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Debug</h2>
+      <div class="controls">
+        <button id="stopBtn">Stop reply</button>
+        <button id="clearBtn">Clear conversation</button>
+        <button id="dlBtn">Download session log</button>
+        <label class="toggle"><input id="rawToggle" type="checkbox"> Show raw API responses</label>
+      </div>
+      <p class="muted">Session <code id="sid">–</code></p>
+    </section>
+  </aside>
+</main>
+
+<section class="logpanel">
+  <div class="loghead">
+    <button id="logToggle" aria-expanded="true">▾ Logs</button>
+    <span id="logCount" class="muted"></span>
+    <span class="spacer"></span>
+    <label class="toggle"><input id="errOnly" type="checkbox"> Errors and warnings only</label>
+    <button id="logClear">Clear</button>
+  </div>
+  <div id="log" class="log"></div>
+</section>
+
+<script src="app.js"></script>
+</body>
+</html>

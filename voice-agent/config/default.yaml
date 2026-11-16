@@ -1,0 +1,26 @@
+# Which preset from models.yaml to use. This is the one line to change to switch models.
+active_preset: default
+
+server:
+  host: 0.0.0.0
+  port: 8080
+
+assistant:
+  system_prompt: >
+    You are a friendly voice assistant. Your replies are spoken aloud, so keep them
+    short and conversational: one to three sentences, no markdown, no lists, no emojis.
+  max_history_turns: 12       # older turns are dropped from the LLM context
+
+vad:
+  threshold: 0.5              # speech probability needed to start a turn
+  min_silence_ms: 700         # silence that ends a turn
+  min_speech_ms: 250          # shorter bursts are ignored
+  pre_roll_ms: 300            # audio kept from before speech was detected
+  max_utterance_s: 30
+  barge_in: true              # speaking while the assistant talks interrupts it
+
+cost:
+  session_budget_usd: 0.50    # 0 disables. When reached, the session stops taking turns.
+
+logging:
+  sessions_dir: logs/sessions

@@ -1,0 +1,10 @@
+services:
+  voice-agent:
+    build: .
+    env_file: .env
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./logs/sessions:/app/logs/sessions   # keep session logs across restarts
+      - ./config:/app/config:ro              # edit YAML without rebuilding
+    restart: unless-stopped

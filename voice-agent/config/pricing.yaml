@@ -1,0 +1,26 @@
+# Single source of truth for cost calculation (USD).
+# When an API response reports its own cost, that number is used and the log entry is
+# marked source: "api". Otherwise the rate below is used (source: "pricing.yaml").
+#
+# Units:
+#   LLM: input_per_million / output_per_million  (tokens)
+#   STT: per_minute                              (audio minutes)
+#   TTS: per_1k_characters                       (characters sent to TTS)
+isoquant:
+  deepseek-v4.1-flash-1017-fast:
+    input_per_million: 0.035     # from project plan; not verified against Isoquant's price list
+    output_per_million: 0.37     # from project plan; not verified against Isoquant's price list
+
+openrouter:
+  # Rates below read from OpenRouter's model list on 2026-11-16.
+  openai/whisper-1:
+    per_minute: 0.006
+  openai/whisper-large-v3-turbo:
+    per_minute: 0.0002
+  hexgrad/kokoro-82m:
+    per_1k_characters: 0.00062
+  x-ai/grok-voice-tts-1.0:
+    per_1k_characters: 0.015
+  deepseek/deepseek-v4.1-flash-1017:
+    input_per_million: 0.30      # peak rate; off-peak is 0.15
+    output_per_million: 1.20     # peak rate; off-peak is 0.60
