@@ -13,6 +13,7 @@
     <div class="brand">Voice Agent</div>
     <button id="newBtn" class="btn primary wide">+ New conversation</button>
     <div class="side-label">Your conversations</div>
+    <input id="search" type="search" class="search" placeholder="Search…" aria-label="Search conversations">
     <nav id="convList" class="convlist"></nav>
     <div class="side-foot"><span id="connDot" class="dot off"></span><span id="connText">Connecting…</span></div>
   </aside>
@@ -24,6 +25,7 @@
         <h1 id="convTitle">Voice Agent</h1>
         <span id="modeBadge" class="badge" hidden></span>
       </div>
+      <button id="reviewBtn" class="btn accent" hidden title="Get a report on your English in this conversation">Feedback</button>
       <button id="costChip" class="btn chip" title="Cost of this conversation. Click for details.">$0.000000</button>
       <button id="detailsBtn" class="btn">Details</button>
     </header>
@@ -80,6 +82,8 @@
       </div>
       <h3>Speed</h3>
       <p id="latency" class="muted">No replies yet.</p>
+      <h3>Practice</h3>
+      <p id="spoken" class="muted">You have not spoken in this conversation yet.</p>
     </div>
 
     <div id="tab-logs" class="tabpane" hidden>
@@ -103,21 +107,53 @@
           <option value="1.2">Fast (1.2x)</option>
         </select>
       </label>
+      <label class="field">How long a pause ends your turn
+        <select id="pause">
+          <option value="">Mode default</option>
+          <option value="400">Quick (0.4 s): fastest replies</option>
+          <option value="550">Normal (0.55 s)</option>
+          <option value="900">Patient (0.9 s): time to think</option>
+          <option value="1500">Very patient (1.5 s)</option>
+        </select>
+      </label>
+      <label class="toggle"><input id="recordToggle" type="checkbox" checked> Record audio so I can replay it</label>
       <label class="field">Model preset<select id="preset"></select></label>
       <dl class="models">
         <dt>LLM</dt><dd id="mLlm">–</dd>
         <dt>Speech to text</dt><dd id="mStt">–</dd>
         <dt>Text to speech</dt><dd id="mTts">–</dd>
       </dl>
+      <h3>This conversation</h3>
+      <button id="audioBtn" class="btn wide">Download the recording (WAV)</button>
+      <button id="exportBtn" class="btn wide">Export as text</button>
       <h3>Debug</h3>
       <label class="toggle"><input id="rawToggle" type="checkbox"> Show raw API responses in Logs</label>
-      <button id="exportBtn" class="btn wide">Export this conversation (text)</button>
       <button id="dlBtn" class="btn wide">Download debug log (JSON)</button>
       <p class="muted">Session <code id="sid">–</code></p>
     </div>
   </aside>
 
   <div id="scrim" class="scrim" hidden></div>
+
+  <dialog id="reviewDlg" class="dlg">
+    <div class="dlghead"><h2>Your English feedback</h2><button class="btn icon" data-close aria-label="Close">✕</button></div>
+    <div id="reviewBody" class="dlgbody"></div>
+    <div class="dlgfoot"><span id="reviewMeta" class="muted"></span><span class="spacer"></span><button id="reviewAgain" class="btn primary">Update feedback</button></div>
+  </dialog>
+
+  <dialog id="modeDlg" class="dlg">
+    <form id="modeForm" method="dialog">
+      <div class="dlghead"><h2>Create your own mode</h2><button type="button" class="btn icon" data-close aria-label="Close">✕</button></div>
+      <div class="dlgbody">
+        <label class="field">Name<input id="modeName" type="text" maxlength="40" required placeholder="Job interview practice"></label>
+        <label class="field">How should the assistant behave?
+          <textarea id="modeInstr" rows="6" maxlength="2000" required minlength="10" placeholder="You are an interviewer for a software job. Ask me one question at a time, then give short feedback on my answer."></textarea>
+        </label>
+        <label class="field">First thing it says (optional)<input id="modeGreet" type="text" maxlength="200" placeholder="Welcome! Shall we start the interview?"></label>
+      </div>
+      <div class="dlgfoot"><span class="spacer"></span><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary">Create</button></div>
+    </form>
+  </dialog>
 </div>
 <script src="app.js"></script>
 </body>

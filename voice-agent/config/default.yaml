@@ -25,5 +25,11 @@ cost:
 logging:
   sessions_dir: logs/sessions
 
+recording:
+  enabled: true               # save the audio of both sides so messages can be replayed.
+                              # About 2 to 3 MB per minute of speech (WAV). Users can turn
+                              # it off for themselves in Settings.
+
 storage:
   conversations_dir: data/conversations   # saved conversations (history you can resume)
+  audio_dir: data/audio                   # recordings, one folder per conversation

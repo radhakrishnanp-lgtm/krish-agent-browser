@@ -50,6 +50,29 @@ class StoreTest(unittest.TestCase):
             self.assertTrue(store.delete(conv["id"]))
             self.assertIsNone(store.load(conv["id"]))
 
+    def test_recording_saved_stitched_and_deleted(self):
+        with tempfile.TemporaryDirectory() as d:
+            store = Store(Path(d) / "conversations")
+            conv = store.create("general")
+            user = store.save_audio(conv["id"], 0, "user", np.zeros(16000, dtype=np.int16).tobytes(), 16000)
+            reply = store.save_audio(conv["id"], 1, "assistant", np.zeros(24000, dtype=np.int16).tobytes(), 24000)
+            conv["messages"] = [{"role": "user", "content": "a", "audio": user}, {"role": "assistant", "content": "b", "audio": reply}]
+            store.save(conv)
+            wav = store.full_recording(conv)
+            # 1 s + 1 s of audio plus two 0.45 s gaps, at 24 kHz 16-bit, after the 44-byte header
+            self.assertEqual(len(wav) - 44, int(24000 * 2.9) * 2)
+            self.assertIsNone(store.audio_path(conv["id"], "../secret.wav"))
+            store.delete(conv["id"])
+            self.assertFalse(store.audio_path(conv["id"], user).exists())
+
+    def test_custom_modes(self):
+        with tempfile.TemporaryDirectory() as d:
+            store = Store(Path(d) / "conversations")
+            mode_id = store.save_custom_mode("Pirate", "Talk like a pirate at all times.")
+            self.assertIn(mode_id, store.custom_modes())
+            self.assertTrue(store.delete_custom_mode(mode_id))
+            self.assertFalse(store.delete_custom_mode("general"))
+
     def test_rejects_path_tricks(self):
         with tempfile.TemporaryDirectory() as d:
             store = Store(Path(d))

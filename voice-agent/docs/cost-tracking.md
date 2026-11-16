@@ -32,6 +32,9 @@ and the log line says `(tokens estimated)`.
   and the log line says "for discarded early transcriptions". With the default STT model this
   is about $0.00001 each.
 - The spoken greeting of a new conversation costs a TTS call.
+- A feedback report is one extra LLM call (about $0.0001 to $0.0005 in testing). It is added to
+  the conversation's LLM cost.
+- Replaying a recording is free: it plays the saved file.
 - `openai/whisper-1` bills whole seconds, rounded up.
 - OpenRouter's `deepseek/deepseek-v4.1-flash-1017` has peak and off-peak prices. `pricing.yaml`
   holds the peak rate, but the API-reported cost is used in practice.

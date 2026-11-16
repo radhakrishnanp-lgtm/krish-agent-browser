@@ -23,6 +23,17 @@ Status as of 2026-11-16. "Verified" means it was run and observed, with what was
 | Voice and speed settings, export, debug log download | Verified | Headless browser |
 | Auto-reconnect after a dropped connection | Not tested | |
 
+## Third round: recordings and practice tools
+
+| Feature | Status | How it was checked |
+|---|---|---|
+| Recording both sides, Play button per message | Verified | Headless browser: recording played back; files present in `data/audio` |
+| Download whole conversation as one WAV | Verified | Endpoint returned a 1.8 MB file for a five-message conversation |
+| Recordings deleted with the conversation; recording can be switched off | Verified | Folder gone after delete; no new files with the toggle off |
+| English feedback report | Verified | Five mistakes listed with corrections and a level, saved and shown again after reload |
+| Create and delete your own mode | Verified | A "Pirate captain" mode answered in character |
+| Pause-length setting, conversation search | Verified in the UI | Setting accepted; search filtered the list. The effect of pause length on real speech is untested |
+
 ## Not yet verified
 
 - **The Isoquant LLM call.** No Isoquant key was available, so the `default` and `premium-voice`

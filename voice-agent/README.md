@@ -6,6 +6,12 @@ Talk to an AI in your browser. All models run in the cloud; the server needs no 
   Add your own in `config/modes.yaml`.
 - **Saved conversations:** every conversation is stored on the server. Pick one from the
   sidebar to resume it; the assistant remembers what was said.
+- **Recordings:** both sides of the conversation are recorded. Press Play under any message to
+  hear it again, or download the whole conversation as one audio file.
+- **English feedback report:** in English practice, the Feedback button lists your mistakes
+  with corrections, an estimated level and what to practise next.
+- **Your own modes:** describe how the assistant should behave ("job interviewer", "storyteller")
+  and start talking.
 - **Built for speed:** replies are spoken sentence by sentence while the LLM is still writing.
   See [docs/latency.md](docs/latency.md).
 - **Live cost, logs and reply time** for every turn.
@@ -62,6 +68,11 @@ Saved conversations live in `/app/data/conversations` and debug logs in `/app/lo
 The compose file mounts both as volumes; on other platforms attach a persistent disk to
 `/app/data`, or your conversation history is lost on every redeploy.
 
+Recordings are WAV files in `/app/data/audio`, about 2 to 3 MB per minute of speech, and are
+deleted with their conversation. Turn recording off for everyone with `recording.enabled: false`
+in `config/default.yaml`, or per browser in Settings. Recordings are other people's voices if
+you share the app: tell them it records.
+
 There are no user accounts: everyone who has the access token shares the same conversation list.
 
 ## Change models
@@ -87,6 +98,8 @@ Presets live in `config/models.yaml`. See [docs/how-to-change-models.md](docs/ho
 | `ui/` | The browser UI (plain HTML, CSS and JS, no build step) |
 | `scripts/` | `start-server.sh`, `smoke_test.py` |
 | `data/conversations/` | Saved conversations, one JSON file each |
+| `data/audio/` | Recordings, one folder per conversation |
+| `data/custom_modes.json` | Modes created in the UI |
 | `logs/sessions/` | Debug log, one JSON file per page visit |
 | `docs/` | Model changes, modes, latency, cost tracking, checkpoints |
 

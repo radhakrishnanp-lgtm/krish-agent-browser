@@ -12,7 +12,7 @@ import os
 import re
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .config import ROOT, Config, ConfigError
@@ -34,7 +34,8 @@ if not ACCESS_TOKEN:
 
 SESSIONS_DIR = ROOT / (cfg.default.get("logging") or {}).get("sessions_dir", "logs/sessions")
 SESSION_ID = re.compile(r"^[0-9a-f-]{20,40}$")
-store = Store(ROOT / (cfg.default.get("storage") or {}).get("conversations_dir", "data/conversations"))
+_storage = cfg.default.get("storage") or {}
+store = Store(ROOT / _storage.get("conversations_dir", "data/conversations"), ROOT / _storage.get("audio_dir", "data/audio"))
 
 app = FastAPI(title="Voice Agent")
 
@@ -56,6 +57,27 @@ def session_log(session_id: str, token: str | None = None):
     if not SESSION_ID.match(session_id) or not path.exists():
         raise HTTPException(404, "Session log not found (it is written after the first turn)")
     return FileResponse(path, media_type="application/json", filename=path.name)
+
+
+@app.get("/api/audio/{conv_id}/{name}")
+def message_audio(conv_id: str, name: str, token: str | None = None):
+    if not token_ok(token):
+        raise HTTPException(401, "Invalid access token")
+    path = store.audio_path(conv_id, name)
+    if not path or not path.exists():
+        raise HTTPException(404, "Recording not found")
+    return FileResponse(path, media_type="audio/wav")
+
+
+@app.get("/api/conversations/{conv_id}/recording.wav")
+def conversation_recording(conv_id: str, token: str | None = None):
+    if not token_ok(token):
+        raise HTTPException(401, "Invalid access token")
+    conv = store.load(conv_id)
+    data = store.full_recording(conv) if conv else None
+    if not data:
+        raise HTTPException(404, "This conversation has no recorded audio")
+    return Response(data, media_type="audio/wav", headers={"Content-Disposition": f'attachment; filename="conversation-{conv_id}.wav"'})
 
 
 @app.websocket("/ws")
@@ -127,7 +149,13 @@ async def ws_endpoint(ws: WebSocket, token: str | None = None):
             elif kind == "rename":
                 session.rename_conversation(str(data.get("id")), str(data.get("title", "")))
             elif kind == "settings":
-                session.set_voice_settings(data.get("voice"), data.get("speed"))
+                session.apply_settings(data)
+            elif kind == "review":
+                session.start_review()
+            elif kind == "save_mode":
+                session.save_custom_mode(data.get("name"), data.get("instructions"), data.get("greeting"))
+            elif kind == "delete_mode":
+                session.delete_custom_mode(data.get("id"))
             elif kind == "set_preset":
                 await session.cancel_turn()
                 session.set_preset(str(data.get("name")))

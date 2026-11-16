@@ -3,6 +3,7 @@ per-connection debug log, and the saved conversation it is attached to."""
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
 import re
@@ -25,6 +26,8 @@ MIN_TTS_CHARS = 12          # shorter sentences ("Hi!") are merged with the next
 FIRST_CLAUSE_CHARS = 60     # a long first sentence is split at a comma so audio starts sooner
 TTS_PARALLEL = 3            # sentences synthesised at once (played back in order)
 TITLE_CHARS = 48
+SPOKEN_RULES = ("Your replies are spoken aloud, so keep them short and conversational: one to three "
+                "sentences unless asked for more. No markdown, no lists, no emojis.")
 
 
 def now_iso() -> str:
@@ -47,13 +50,18 @@ class Session:
         self.show_raw = False
         self.user_voice: str | None = None
         self.user_speed: float | None = None
+        self.user_pause_ms: int | None = None
+        self.record = bool((cfg.default.get("recording") or {}).get("enabled", True))
+        self.record_allowed = self.record
+        self.review_task: asyncio.Task | None = None
         self.turn_task: asyncio.Task | None = None
         self.early: dict | None = None       # speculative STT started during a pause
         self.orphan_stt_cost = 0.0           # cost of discarded speculative STT calls
         self._bg: set[asyncio.Task] = set()
         v = cfg.default.get("vad", {})
         self.barge_in = bool(v.get("barge_in", True))
-        self.min_silence_ms = int(v.get("min_silence_ms", 550))
+        self.default_silence_ms = int(v.get("min_silence_ms", 550))
+        self.min_silence_ms = self.default_silence_ms
         self.vad = TurnDetector(
             threshold=v.get("threshold", 0.5),
             min_silence_ms=self.min_silence_ms,
@@ -103,7 +111,10 @@ class Session:
             "preset": self.preset,
             "presets": list(self.cfg.presets),
             "models": self.models(),
-            "modes": [{"id": k, "name": m.get("name", k), "description": m.get("description", "")} for k, m in self.cfg.modes.items()],
+            "modes": [{"id": k, "name": m.get("name", k), "description": m.get("description", ""),
+                       "custom": bool(m.get("custom")), "review": bool(m.get("review_prompt"))}
+                      for k, m in self.all_modes().items()],
+            "recording_allowed": self.record_allowed,
             "default_mode": self.cfg.default_mode,
             "voices": list(tts.options.get("voices") or ([tts.options["voice"]] if tts.options.get("voice") else [])),
             "default_voice": tts.options.get("voice"),
@@ -155,11 +166,46 @@ class Session:
         c = self.conv
         self.send({"type": "conversation", "conversation": c and {
             "id": c["id"], "title": c["title"], "mode": c["mode"], "messages": c["messages"],
+            "review": c.get("review"), "user_seconds": round(c.get("user_seconds", 0), 1),
             "totals": {k: round(v, 8) for k, v in c["totals"].items()}}})
+
+    def all_modes(self) -> dict:
+        """Modes from config/modes.yaml plus the ones created in the UI."""
+        modes = dict(self.cfg.modes)
+        for key, m in self.store.custom_modes().items():
+            modes[key] = {**m, "system_prompt": f"{m.get('instructions', '').strip()}\n\n{SPOKEN_RULES}"}
+        return modes
 
     def mode(self) -> dict:
         key = self.conv["mode"] if self.conv else self.cfg.default_mode
-        return self.cfg.modes.get(key) or self.cfg.modes[self.cfg.default_mode]
+        modes = self.all_modes()
+        return modes.get(key) or modes[self.cfg.default_mode]
+
+    def _apply_pause(self) -> None:
+        """How long a pause ends the turn: the user's setting, else the mode's, else the default."""
+        ms = self.user_pause_ms or self.mode().get("min_silence_ms") or self.default_silence_ms
+        self.min_silence_ms = int(ms)
+        self.vad.set_min_silence(self.min_silence_ms)
+
+    def save_custom_mode(self, name, instructions, greeting) -> None:
+        name = " ".join(str(name or "").split())[:40]
+        instructions = str(instructions or "").strip()[:2000]
+        greeting = " ".join(str(greeting or "").split())[:200]
+        if not name or len(instructions) < 10:
+            self.emit_log("error", "A mode needs a name and at least a sentence of instructions.")
+            return
+        try:
+            mode_id = self.store.save_custom_mode(name, instructions, greeting)
+        except OSError as e:
+            self.emit_log("error", f"Could not save the mode: {e}")
+            return
+        self.emit_log("info", f"Created mode '{name}' ({mode_id})")
+        self.send(self.hello())
+
+    def delete_custom_mode(self, mode_id) -> None:
+        if self.store.delete_custom_mode(mode_id):
+            self.emit_log("info", f"Deleted mode {mode_id}")
+            self.send(self.hello())
 
     def _save_conv(self) -> None:
         if not self.conv:
@@ -171,14 +217,16 @@ class Session:
 
     async def new_conversation(self, mode: str | None, greet: bool = True) -> None:
         await self.cancel_turn()
-        if mode not in self.cfg.modes:
+        modes = self.all_modes()
+        if mode not in modes:
             mode = self.cfg.default_mode
         self.conv = self.store.create(mode)
         self.vad.reset()
+        self._apply_pause()
         self.send_conversation()
         self.emit_cost(None)
         self.emit_log("info", f"New conversation {self.conv['id']} in mode '{mode}'")
-        greeting = (self.cfg.modes[mode].get("greeting") or "").strip()
+        greeting = (modes[mode].get("greeting") or "").strip()
         if greet and greeting:
             self.start_turn(greeting=greeting)
 
@@ -191,10 +239,11 @@ class Session:
             self.send_conversations()
             self.emit_log("warn", "That conversation no longer exists.")
             return
-        if conv["mode"] not in self.cfg.modes:
-            self.emit_log("warn", f"Mode '{conv['mode']}' is no longer in config/modes.yaml; using '{self.cfg.default_mode}'.")
+        if conv["mode"] not in self.all_modes():
+            self.emit_log("warn", f"Mode '{conv['mode']}' no longer exists; using '{self.cfg.default_mode}'.")
         self.conv = conv
         self.vad.reset()
+        self._apply_pause()
         self.send_conversation()
         self.emit_cost(None)
         self.emit_log("info", f"Resumed conversation {conv['id']} \"{conv['title']}\" ({len(conv['messages'])} messages)")
@@ -243,7 +292,14 @@ class Session:
             self.emit_log("error", f"Missing API key(s) for this preset: {', '.join(missing)}. Add them to voice-agent/.env and restart.")
         self.warm()
 
-    def set_voice_settings(self, voice, speed) -> None:
+    def apply_settings(self, data: dict) -> None:
+        voice, speed = data.get("voice"), data.get("speed")
+        self.record = self.record_allowed and data.get("record", True) is not False
+        try:
+            self.user_pause_ms = min(3000, max(300, int(data["pause_ms"]))) if data.get("pause_ms") else None
+        except (TypeError, ValueError):
+            self.user_pause_ms = None
+        self._apply_pause()
         allowed = self.stages["tts"].options.get("voices") or []
         self.user_voice = voice if isinstance(voice, str) and voice in allowed else None
         try:
@@ -263,6 +319,8 @@ class Session:
     async def close(self) -> None:
         await self.cancel_turn()
         self._drop_early()
+        if self.review_task:
+            self.review_task.cancel()
         for task in list(self._bg):
             task.cancel()
         if self.turns:
@@ -375,6 +433,7 @@ class Session:
         }
         self.turns.append(turn)
         turn["_t0"] = t_start
+        turn["_audio"] = []   # the reply's audio, kept for the recording
         user_saved = False
         try:
             if pcm:
@@ -383,10 +442,17 @@ class Session:
                     self.emit_log("warn", "No words recognised in that audio; turn skipped")
                     return
             if turn["user_text"]:
-                self.send({"type": "transcript", "role": "user", "turn": turn["index"], "text": turn["user_text"], "final": True})
                 # Save the user's words right away so nothing is lost if the reply fails.
-                conv["messages"].append({"role": "user", "content": turn["user_text"], "ts": turn["time"]})
+                msg = {"role": "user", "content": turn["user_text"], "ts": turn["time"]}
+                if pcm:
+                    conv["user_seconds"] = conv.get("user_seconds", 0) + len(pcm) / 2 / SAMPLE_RATE
+                    name = self._save_audio(conv, "user", pcm, SAMPLE_RATE)
+                    if name:
+                        msg["audio"] = name
+                conv["messages"].append(msg)
                 user_saved = True
+                self.send({"type": "transcript", "role": "user", "turn": turn["index"], "text": turn["user_text"],
+                           "final": True, "audio": msg.get("audio")})
                 if not conv.get("titled") and conv["title"] == "New conversation":
                     t = " ".join(turn["user_text"].split())
                     conv["title"] = t[:TITLE_CHARS].rstrip() + ("…" if len(t) > TITLE_CHARS else "")
@@ -406,12 +472,17 @@ class Session:
             self.send({"type": "error", "message": f"Unexpected server error: {e!r}"})
         finally:
             turn.pop("_t0", None)
+            reply_audio = b"".join(turn.pop("_audio", []))
+            reply_audio_name = None
             turn["latency_ms"]["total"] = int((time.monotonic() - t_start) * 1000)
             if turn["assistant_text"].strip():
                 msg = {"role": "assistant", "content": turn["assistant_text"].strip(), "ts": now_iso(),
                        "cost": turn["turn_total"], "response_ms": turn["latency_ms"].get("response")}
                 if turn["interrupted"]:
                     msg["interrupted"] = True
+                reply_audio_name = self._save_audio(conv, "assistant", reply_audio, providers.TTS_SAMPLE_RATE)
+                if reply_audio_name:
+                    msg["audio"] = reply_audio_name
                 conv["messages"].append(msg)
             if user_saved or turn["assistant_text"].strip():
                 conv["turns"] = conv.get("turns", 0) + (1 if user_saved else 0)
@@ -419,7 +490,8 @@ class Session:
                 self.send_conversations()
             self.send({"type": "transcript", "role": "assistant", "turn": turn["index"], "text": turn["assistant_text"],
                        "final": True, "interrupted": turn["interrupted"], "cost": turn["turn_total"],
-                       "response_ms": turn["latency_ms"].get("response")})
+                       "response_ms": turn["latency_ms"].get("response"), "audio": reply_audio_name,
+                       "user_seconds": round(conv.get("user_seconds", 0), 1)})
             self.send({"type": "audio_end", "turn": turn["index"]})
             lat = turn["latency_ms"]
             self.emit_log("info",
@@ -432,6 +504,71 @@ class Session:
             self.emit_cost(turn)
             self.send({"type": "status", "state": "listening"})
             self.save_log()
+
+    def _save_audio(self, conv: dict, role: str, pcm: bytes, sample_rate: int) -> str | None:
+        if not self.record or not pcm:
+            return None
+        try:
+            return self.store.save_audio(conv["id"], len(conv["messages"]), role, pcm, sample_rate)
+        except OSError as e:
+            self.emit_log("warn", f"Could not save the recording: {e}")
+            return None
+
+    # ---------- feedback report ----------
+
+    def start_review(self) -> None:
+        if self.review_task and not self.review_task.done():
+            return
+        self.review_task = asyncio.create_task(self._review())
+
+    async def _review(self) -> None:
+        conv, mode = self.conv, self.mode()
+        prompt = (mode.get("review_prompt") or "").strip()
+        if not conv or not prompt:
+            self.send({"type": "review", "error": "This mode has no feedback report."})
+            return
+        said = [m for m in conv["messages"] if m["role"] == "user"]
+        if len(said) < 2:
+            self.send({"type": "review", "error": "Say at least two things first, then ask for feedback."})
+            return
+        self.send({"type": "review", "working": True})
+        lines = [f"{'Learner' if m['role'] == 'user' else 'Partner'}: {m['content']}" for m in conv["messages"][-80:]]
+        llm = self.stages["llm"]
+        stage = dataclasses.replace(llm, options={**llm.options, "max_tokens": 1200})
+        messages = [{"role": "system", "content": prompt}, {"role": "user", "content": "Transcript:\n" + "\n".join(lines)}]
+        text, usage, t = "", None, time.monotonic()
+        try:
+            async for chunk in providers.chat_stream(stage, messages):
+                if "delta" in chunk:
+                    text += chunk["delta"]
+                else:
+                    usage = chunk["usage"]
+        except (ProviderError, ConfigError) as e:
+            self.emit_log("error", str(e))
+            self.send({"type": "review", "error": str(e)})
+            return
+        u = usage or {"prompt_tokens": sum(len(m["content"]) for m in messages) // 4, "completion_tokens": len(text) // 4}
+        cost, source = pricing.llm_cost(self.cfg.rates(llm), int(u.get("prompt_tokens") or 0), int(u.get("completion_tokens") or 0), u.get("cost"))
+        for totals in (self.totals, conv["totals"]):
+            totals["llm"] += cost
+            totals["total"] += cost
+        self.emit_log("info", f"Feedback report: {u.get('prompt_tokens')} in / {u.get('completion_tokens')} out tokens "
+                              f"in {int((time.monotonic() - t) * 1000)} ms, ${cost:.6f} ({source})")
+        review = {"ts": now_iso(), "messages_reviewed": len(said), "cost": round(cost, 8)}
+        try:
+            body = text.strip()
+            body = body[body.index("{"): body.rindex("}") + 1]
+            data = json.loads(body)
+            if not isinstance(data, dict):
+                raise ValueError
+            review.update({k: data.get(k) for k in ("summary", "level", "strengths", "mistakes", "tips")})
+        except ValueError:
+            review["text"] = text.strip()  # the model did not return JSON: show what it wrote
+        conv["review"] = review
+        self._save_conv()
+        self.send({"type": "review", "review": review})
+        if conv is self.conv:
+            self.emit_cost(None)
 
     async def _stt(self, turn: dict, pcm: bytes, stt_task: asyncio.Task | None) -> None:
         stage = self.stages["stt"]
@@ -602,6 +739,7 @@ class Session:
                     if isinstance(item, Exception):
                         raise item
                     self._first_audio(turn)
+                    turn["_audio"].append(item)
                     self.outbox.put_nowait(item)
         finally:
             intake_task.cancel()

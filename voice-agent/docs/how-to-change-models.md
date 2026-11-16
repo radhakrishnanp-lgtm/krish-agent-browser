@@ -64,5 +64,10 @@ It calls TTS, STT and LLM once each and prints PASS or FAIL with the provider's 
 ## Change how the assistant behaves
 
 Modes are in `config/modes.yaml`. Each has a `system_prompt`, an optional spoken `greeting`,
-an optional `tts_speed` (English practice speaks at 0.9x) and an optional `stt_language`.
+an optional `tts_speed` (English practice speaks at 0.9x), `stt_language`, `min_silence_ms`
+(English practice waits 0.8 s so learners have time to think) and `review_prompt` (adds the
+Feedback button).
 Copy a block to add a mode; it appears on the start screen after a page reload.
+
+Users can also create modes from the start screen ("Create your own"). Those are stored in
+`data/custom_modes.json`, not in the YAML.

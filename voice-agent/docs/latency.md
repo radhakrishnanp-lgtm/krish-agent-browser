@@ -34,7 +34,7 @@ Where the time goes in a typical turn:
 
 | Setting | Faster | Cost of going faster |
 |---|---|---|
-| `vad.min_silence_ms` (default 550) | Lower, e.g. 400 | Cuts you off if you pause mid-sentence. Language learners may want 800 or more |
+| `vad.min_silence_ms` (default 550; English practice uses 800; users can change it in Settings) | Lower, e.g. 400 | Cuts you off if you pause mid-sentence. Language learners may want 800 or more |
 | Preset `premium-voice` | `x-ai/grok-voice-tts-1.0` started in about 240 ms warm, against 450 to 700 ms for the default voice | About 25 times the TTS price ($0.015 against $0.00062 per 1,000 characters) |
 | `llm.max_tokens` in `models.yaml` | Lower | Shorter answers |
 | Mode `system_prompt` | Ask for shorter replies | Less detail |

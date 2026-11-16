@@ -24,6 +24,8 @@ let serverState = 'idle', connected = false, retries = 0, retryTimer = null;
 let micOn = false, micCtx = null, micStream = null, micLevel = 0;
 let playCtx = null, playHead = 0, playing = new Set(), acceptAudio = false, outRate = 24000, playLevel = 0;
 let errCount = 0, replyTimes = [];
+let replay = null, replayBtn = null;
+const tok = () => encodeURIComponent(store.get('voiceAgentToken') || '');
 
 // ---------- connection ----------
 
@@ -86,6 +88,7 @@ function onMessage(m) {
     case 'error': addRow('error', null, m.message); break;
     case 'audio_start': acceptAudio = true; break;
     case 'interrupt': stopPlayback(); break;
+    case 'review': showReview(m); break;
   }
 }
 
@@ -99,15 +102,30 @@ function onHello(m) {
   const voice = m.voices.includes(savedVoice) ? savedVoice : '';
   fillSelect($('voice'), [['', `Default (${m.default_voice || 'model default'})`], ...m.voices.map((v) => [v, v])], voice);
   $('speed').value = store.get('voiceAgentSpeed') || '';
+  $('pause').value = store.get('voiceAgentPause') || '';
+  $('recordToggle').disabled = !m.recording_allowed;
+  $('recordToggle').checked = m.recording_allowed && store.get('voiceAgentRecord') !== 'off';
   sendSettings();
   $('modeCards').innerHTML = '';
   for (const mode of m.modes) {
-    const b = document.createElement('button');
-    b.className = 'modecard';
+    const b = el('div', null, 'modecard');
+    b.tabIndex = 0; b.setAttribute('role', 'button');
     b.append(el('b', mode.name), el('span', mode.description));
-    b.onclick = () => { ensurePlayCtx(); send({ type: 'new', mode: mode.id }); };
+    const start = () => { ensurePlayCtx(); send({ type: 'new', mode: mode.id }); };
+    b.onclick = start;
+    b.onkeydown = (e) => { if (e.target === b && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); start(); } };
+    if (mode.custom) {
+      const del = el('button', '✕', 'del'); del.title = 'Delete this mode'; del.setAttribute('aria-label', `Delete mode ${mode.name}`);
+      del.onclick = (e) => { e.stopPropagation(); if (confirm(`Delete the mode "${mode.name}"? Conversations that used it are kept.`)) send({ type: 'delete_mode', id: mode.id }); };
+      b.append(del);
+    }
     $('modeCards').append(b);
   }
+  const add = el('button', null, 'modecard add');
+  add.append(el('b', '+ Create your own'), el('span', 'Interview practice, a language tutor, a storyteller: describe it and start talking.'));
+  add.onclick = () => $('modeDlg').showModal();
+  $('modeCards').append(add);
+  if (conv) renderHeader();
   if (first) { // new connection: go back to the conversation that was open
     const last = conv ? conv.id : store.get('voiceAgentConv');
     if (last) send({ type: 'open', id: last }); else showConversation(null);
@@ -127,7 +145,10 @@ function el(tag, text, cls) {
 }
 
 function sendSettings() {
-  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'settings', voice: $('voice').value || null, speed: $('speed').value || null }));
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'settings', voice: $('voice').value || null, speed: $('speed').value || null,
+      pause_ms: $('pause').value || null, record: $('recordToggle').checked }));
+  }
 }
 
 // ---------- conversations ----------
@@ -147,8 +168,10 @@ function ago(iso) {
 function renderConvList() {
   const box = $('convList');
   box.innerHTML = '';
-  if (!convs.length) { box.append(el('div', 'Nothing saved yet.', 'none')); return; }
-  for (const c of convs) {
+  const q = $('search').value.trim().toLowerCase();
+  const shown = q ? convs.filter((c) => c.title.toLowerCase().includes(q) || modeName(c.mode).toLowerCase().includes(q)) : convs;
+  if (!shown.length) { box.append(el('div', q ? 'No conversation matches.' : 'Nothing saved yet.', 'none')); return; }
+  for (const c of shown) {
     const row = el('div', null, 'conv' + (conv && conv.id === c.id ? ' on' : ''));
     row.tabIndex = 0;
     row.setAttribute('role', 'button');
@@ -168,7 +191,9 @@ function renderConvList() {
 
 function showConversation(c) {
   stopPlayback();
+  stopReplay();
   conv = c;
+  showSpoken(c ? c.user_seconds : 0);
   store.set('voiceAgentConv', c ? c.id : null);
   $('welcome').hidden = !!c;
   $('transcript').hidden = !c;
@@ -189,6 +214,7 @@ function renderHeader() {
   $('convTitle').textContent = conv ? conv.title : 'Voice Agent';
   $('modeBadge').hidden = !conv;
   if (conv) $('modeBadge').textContent = modeName(conv.mode);
+  $('reviewBtn').hidden = !(conv && hello?.modes.find((m) => m.id === conv.mode)?.review);
   document.title = conv ? `${conv.title} · Voice Agent` : 'Voice Agent';
 }
 
@@ -225,23 +251,93 @@ function addRow(role, id, text, info) {
     box.append(row);
   }
   fillBubble(row.firstChild, role, text);
-  if (info && role === 'assistant') {
+  if (info) {
     const bits = [];
-    if (info.interrupted) bits.push('interrupted');
-    if (info.response_ms) bits.push(`replied in ${secs(info.response_ms)}`);
-    if (info.cost) bits.push(money(info.cost));
-    if (bits.length) {
+    if (role === 'assistant') {
+      if (info.interrupted) bits.push('interrupted');
+      if (info.response_ms) bits.push(`replied in ${secs(info.response_ms)}`);
+      if (info.cost) bits.push(money(info.cost));
+    }
+    if (bits.length || info.audio) {
       let meta = row.querySelector('.meta');
       if (!meta) { meta = el('div', null, 'meta'); row.append(meta); }
-      meta.textContent = bits.join(' · ');
+      meta.textContent = '';
+      if (info.audio) meta.append(playButton(info.audio, role));
+      meta.append(document.createTextNode(bits.join(' · ')));
     }
   }
   scrollDown(role === 'user');
   return row;
 }
 
+// ---------- replaying recordings ----------
+
+function playButton(name, role) {
+  const b = el('button', '▶ Play', 'play');
+  b.setAttribute('aria-label', role === 'user' ? 'Play what you said' : 'Play this reply');
+  b.onclick = () => {
+    const mine = replayBtn === b;
+    stopReplay();
+    if (mine) return;
+    stopPlayback();
+    send({ type: 'stop' });
+    replay = new Audio(`/api/audio/${conv.id}/${name}?token=${tok()}`);
+    replayBtn = b;
+    b.textContent = '■ Stop'; b.classList.add('on');
+    replay.onended = stopReplay;
+    replay.onerror = () => { stopReplay(); showBanner('That recording could not be played.'); };
+    replay.play().catch(() => stopReplay());
+  };
+  return b;
+}
+
+function stopReplay() {
+  if (replay) { replay.onended = replay.onerror = null; replay.pause(); replay = null; }
+  if (replayBtn) { replayBtn.textContent = '▶ Play'; replayBtn.classList.remove('on'); replayBtn = null; }
+}
+
+function showSpoken(seconds) {
+  if (conv) conv.user_seconds = seconds;
+  const s = Math.round(seconds || 0);
+  $('spoken').textContent = s ? `You have spoken for ${Math.floor(s / 60)} min ${s % 60} s in this conversation.`
+    : 'You have not spoken in this conversation yet.';
+}
+
+// ---------- feedback report ----------
+
+function showReview(m) {
+  const body = $('reviewBody');
+  $('reviewAgain').disabled = !!m.working;
+  if (m.working) { body.textContent = ''; body.append(el('p', 'Reading your conversation…', 'muted')); $('reviewMeta').textContent = ''; return; }
+  if (m.error) { body.textContent = ''; body.append(el('p', m.error)); return; }
+  const r = m.review;
+  if (conv) conv.review = r;
+  body.textContent = '';
+  if (r.text) { const pre = el('p', r.text); pre.style.whiteSpace = 'pre-wrap'; body.append(pre); }
+  if (r.summary) body.append(el('p', r.summary));
+  if (r.level) body.append(el('span', `Level: ${r.level}`, 'level'));
+  const list = (title, items) => {
+    if (!Array.isArray(items) || !items.length) return;
+    const ul = el('ul');
+    for (const i of items) ul.append(el('li', String(i)));
+    body.append(el('h3', title), ul);
+  };
+  list('What you did well', r.strengths);
+  if (Array.isArray(r.mistakes)) {
+    body.append(el('h3', r.mistakes.length ? 'Things to fix' : 'No mistakes found'));
+    for (const x of r.mistakes) {
+      const card = el('div', null, 'mistake');
+      card.append(el('div', String(x.said ?? ''), 'said'), el('div', String(x.better ?? ''), 'better'), el('div', String(x.why ?? ''), 'why'));
+      body.append(card);
+    }
+  }
+  list('Practise next', r.tips);
+  $('reviewMeta').textContent = `${new Date(r.ts).toLocaleString()} · ${r.messages_reviewed} of your messages · ${money(r.cost)}`;
+}
+
 function onTranscript(m) {
   if (!m.text || !conv) return;
+  if (m.final && m.user_seconds != null) showSpoken(m.user_seconds);
   addRow(m.role, `t-${hello.session_id}-${m.role}-${m.turn}`, m.text, m.final ? m : null);
   if (m.final && m.role === 'assistant' && m.response_ms) {
     replyTimes.push(m.response_ms);
@@ -342,6 +438,7 @@ function ensurePlayCtx() {
 
 function onAudio(buf) {
   if (!acceptAudio) return; // stale audio from an interrupted reply
+  stopReplay();
   ensurePlayCtx();
   const pcm = new Int16Array(buf);
   const audio = playCtx.createBuffer(1, pcm.length, outRate);
@@ -386,6 +483,7 @@ async function startMic() {
       micLevel = ev.data.peak;
       // With barge-in off, do not send the assistant's own voice back to the server.
       if (hello && !hello.barge_in && playing.size) return;
+      if (replay) return; // a replayed recording must not be heard as a new turn
       if (ws && ws.readyState === WebSocket.OPEN) ws.send(ev.data.pcm);
     };
     micCtx.createMediaStreamSource(micStream).connect(node);
@@ -457,6 +555,25 @@ for (const t of document.querySelectorAll('.tab')) t.onclick = () => selectTab(t
 $('preset').onchange = (e) => send({ type: 'set_preset', name: e.target.value });
 $('voice').onchange = (e) => { store.set('voiceAgentVoice', e.target.value); sendSettings(); };
 $('speed').onchange = (e) => { store.set('voiceAgentSpeed', e.target.value); sendSettings(); };
+$('pause').onchange = (e) => { store.set('voiceAgentPause', e.target.value); sendSettings(); };
+$('recordToggle').onchange = (e) => { store.set('voiceAgentRecord', e.target.checked ? null : 'off'); sendSettings(); };
+$('search').oninput = renderConvList;
+$('reviewBtn').onclick = () => {
+  $('reviewDlg').showModal();
+  if (conv?.review) showReview({ review: conv.review }); else send({ type: 'review' });
+};
+$('reviewAgain').onclick = () => send({ type: 'review' });
+for (const b of document.querySelectorAll('[data-close]')) b.onclick = () => b.closest('dialog').close();
+$('modeForm').onsubmit = () => {
+  send({ type: 'save_mode', name: $('modeName').value, instructions: $('modeInstr').value, greeting: $('modeGreet').value });
+  $('modeForm').reset();
+};
+$('audioBtn').onclick = async () => {
+  if (!conv) { showBanner('Open a conversation first.'); return; }
+  const r = await fetch(`/api/conversations/${conv.id}/recording.wav?token=${tok()}`).catch(() => null);
+  if (!r || !r.ok) { showBanner(r && r.status === 404 ? 'This conversation has no recorded audio yet.' : 'Could not download the recording.'); return; }
+  download(`${conv.title.replace(/[^\w -]+/g, '').trim() || 'conversation'}.wav`, await r.blob());
+};
 $('rawToggle').onchange = (e) => send({ type: 'raw', enabled: e.target.checked });
 $('errOnly').onchange = (e) => $('log').classList.toggle('erronly', e.target.checked);
 $('logClear').onclick = () => { $('log').innerHTML = ''; };
@@ -479,7 +596,7 @@ $('exportBtn').onclick = () => {
 
 $('dlBtn').onclick = async () => {
   if (!hello) return;
-  const r = await fetch(`/api/sessions/${hello.session_id}?token=${encodeURIComponent(store.get('voiceAgentToken') || '')}`).catch(() => null);
+  const r = await fetch(`/api/sessions/${hello.session_id}?token=${tok()}`).catch(() => null);
   if (!r || !r.ok) {
     showBanner(r && r.status === 404 ? 'No debug log yet: it is written after the first turn of this visit.' : 'Could not download the debug log.');
     return;
@@ -488,6 +605,8 @@ $('dlBtn').onclick = async () => {
 };
 
 if (!wide()) $('details').classList.add('closed');
+// Rotating or shrinking the window must not leave the drawer covering the page.
+window.matchMedia('(min-width: 1101px)').addEventListener('change', (e) => { if (!e.matches) closeDetails(); else $('scrim').hidden = true; });
 renderState();
 connect();
 animate();
