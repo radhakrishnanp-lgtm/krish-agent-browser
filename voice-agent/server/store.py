@@ -29,6 +29,7 @@ class Store:
         self.audio_dir.mkdir(parents=True, exist_ok=True)
         self.modes_path = directory.parent / "custom_modes.json"
         self.profile_path = directory.parent / "profile.json"
+        self.models_path = directory.parent / "custom_models.json"
         self._audio_bytes = sum(f.stat().st_size for f in self.audio_dir.rglob("*.wav"))
 
     def _path(self, conv_id: str) -> Path | None:
@@ -145,6 +146,39 @@ class Store:
         del modes[mode_id]
         self._write_modes(modes)
         return True
+
+    # ---------- models added in the UI (your own endpoints) ----------
+
+    def custom_models(self) -> dict:
+        try:
+            data = json.loads(self.models_path.read_text())
+            return data if isinstance(data, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def save_custom_model(self, spec: dict) -> str:
+        models = self.custom_models()
+        model_id = "custom-" + uuid.uuid4().hex[:8]
+        models[model_id] = spec
+        self._write_json(self.models_path, models)
+        return model_id
+
+    def delete_custom_model(self, model_id: str) -> bool:
+        models = self.custom_models()
+        if not MODE_ID_RE.match(str(model_id)) or model_id not in models:
+            return False
+        del models[model_id]
+        self._write_json(self.models_path, models)
+        return True
+
+    def _write_json(self, path: Path, data: dict) -> None:
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=1, ensure_ascii=False))
+        try:
+            tmp.chmod(0o600)  # custom models can hold API keys
+        except OSError:
+            pass
+        tmp.replace(path)
 
     # ---------- the owner's standing instructions ----------
 

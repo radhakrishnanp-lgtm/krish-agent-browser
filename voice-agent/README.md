@@ -1,6 +1,10 @@
 # Voice Agent
 
-Talk to an AI in your browser. All models run in the cloud; the server needs no GPU.
+Talk to an AI in your browser. All models run behind HTTP APIs, in the cloud or on your own
+GPU machine; the app itself needs no GPU.
+
+**Start with [PLAYBOOK.md](PLAYBOOK.md):** how to run, use, change models, add your own GPU,
+deploy and operate, plus instructions for AI coding agents.
 
 - **Three modes:** English practice (gently corrects your mistakes), Jokes and fun, and Anything.
   Add your own in `config/modes.yaml`.
@@ -17,6 +21,10 @@ Talk to an AI in your browser. All models run in the cloud; the server needs no 
 - **Microphone tools:** choose the microphone and speaker, set sensitivity, and run a 4-second
   test that plays your voice back.
 - **Themes:** System, Light, Dark, Midnight, Forest, Sunset and Rose.
+- **21 models to choose from:** 9 language models, 6 speech-to-text and 6 text-to-speech,
+  each with its price shown. Switch any of them at any time in Settings.
+- **Your own models:** add any OpenAI-compatible endpoint (for example a model on your own
+  GPU) from the UI; it is tested as soon as you add it.
 - **Built for speed:** replies are spoken sentence by sentence while the LLM is still writing.
   See [docs/latency.md](docs/latency.md).
 - **Live cost, logs and reply time** for every turn.
@@ -70,9 +78,9 @@ Three things matter when it is on the internet:
 
 `GET /healthz` returns the active preset and any missing keys, for health checks.
 
-Saved conversations live in `/app/data/conversations` and debug logs in `/app/logs/sessions`.
-The compose file mounts both as volumes; on other platforms attach a persistent disk to
-`/app/data`, or your conversation history is lost on every redeploy.
+Everything you create lives under `/app/data`. The compose file keeps it in a named volume;
+on other platforms attach a persistent disk to `/app/data`, or your history is lost on every
+redeploy.
 
 Recordings are WAV files in `/app/data/audio`, about 2 to 3 MB per minute of speech, and are
 deleted with their conversation. Turn recording off for everyone with `recording.enabled: false`
@@ -86,10 +94,11 @@ There are no user accounts: everyone who has the access token shares the same co
 Edit one line in `config/default.yaml`:
 
 ```yaml
-active_preset: premium-voice
+active_preset: fastest
 ```
 
-Presets live in `config/models.yaml`. See [docs/how-to-change-models.md](docs/how-to-change-models.md).
+Or change any model from the UI at any time. The catalog and prices are in
+[PLAYBOOK.md](PLAYBOOK.md), part 4.
 
 ## Where things are
 
@@ -102,7 +111,8 @@ Presets live in `config/models.yaml`. See [docs/how-to-change-models.md](docs/ho
 | `config/pricing.yaml` | Cost rates |
 | `server/` | `main.py` (web server), `session.py` (turn pipeline + cost + log), `store.py` (saved conversations), `providers.py` (the three API calls), `vad.py`, `pricing.py`, `config.py` |
 | `ui/` | The browser UI (plain HTML, CSS and JS, no build step) |
-| `scripts/` | `start-server.sh`, `smoke_test.py` |
+| `scripts/` | `start-server.sh`, `check.sh` (free checks), `smoke_test.py` (one paid call per stage) |
+| `data/custom_models.json` | Models added in the UI |
 | `data/conversations/` | Saved conversations, one JSON file each |
 | `data/audio/` | Recordings, one folder per conversation |
 | `data/custom_modes.json` | Modes created in the UI |

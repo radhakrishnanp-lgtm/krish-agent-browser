@@ -1,26 +1,44 @@
 # Single source of truth for cost calculation (USD).
-# When an API response reports its own cost, that number is used and the log entry is
-# marked source: "api". Otherwise the rate below is used (source: "pricing.yaml").
+# When an API response reports its own cost, that number is used and the log line says (api).
+# Otherwise the rate below is used and the log line says (pricing.yaml). OpenRouter reports
+# the cost for LLM and STT calls, so those rates are mainly what the UI shows next to each
+# model; TTS is always calculated from the rate here.
 #
 # Units:
 #   LLM: input_per_million / output_per_million  (tokens)
 #   STT: per_minute                              (audio minutes)
 #   TTS: per_1k_characters                       (characters sent to TTS)
+#
+# OpenRouter rates were read from its model list on 2026-11-16. Check them again with the
+# commands in docs/how-to-change-models.md; prices change.
 isoquant:
   deepseek-v4.1-flash-1017-fast:
-    input_per_million: 0.035     # from project plan; not verified against Isoquant's price list
-    output_per_million: 0.37     # from project plan; not verified against Isoquant's price list
+    input_per_million: 0.035     # from the project plan; not verified against Isoquant's price list
+    output_per_million: 0.37     # from the project plan; not verified against Isoquant's price list
 
 openrouter:
-  # Rates below read from OpenRouter's model list on 2026-11-16.
-  openai/whisper-1:
-    per_minute: 0.006
-  openai/whisper-large-v3-turbo:
-    per_minute: 0.0002
-  hexgrad/kokoro-82m:
-    per_1k_characters: 0.00062
-  x-ai/grok-voice-tts-1.0:
-    per_1k_characters: 0.015
-  deepseek/deepseek-v4.1-flash-1017:
-    input_per_million: 0.30      # peak rate; off-peak is 0.15
-    output_per_million: 1.20     # peak rate; off-peak is 0.60
+  # ---- LLM ----
+  deepseek/deepseek-v4.1-flash:        {input_per_million: 0.14, output_per_million: 0.42}
+  deepseek/deepseek-v4.1-flash-1017:   {input_per_million: 0.30, output_per_million: 1.20}   # peak; off-peak is half
+  google/gemma-4-31b-it:               {input_per_million: 0.20, output_per_million: 0.40}
+  anthropic/claude-haiku-5.5:          {input_per_million: 0.10, output_per_million: 0.50}
+  google/gemini-3.1-flash-lite:        {input_per_million: 0.25, output_per_million: 1.50}
+  mistralai/mistral-small-2603:        {input_per_million: 0.15, output_per_million: 0.60}
+  mistralai/ministral-8b-2512:         {input_per_million: 0.15, output_per_million: 0.15}
+  openai/gpt-5.4-nano:                 {input_per_million: 0.20, output_per_million: 1.25}
+
+  # ---- Speech to text ----
+  openai/whisper-large-v3-turbo:       {per_minute: 0.0002}
+  openai/whisper-large-v3:             {per_minute: 0.00045}
+  nvidia/nemotron-3.5-transcribe:      {per_minute: 0.001}
+  openai/gpt-4o-mini-transcribe:       {per_minute: 0.002}    # billed by tokens; measured on a 5 s clip
+  openai/gpt-4o-transcribe:            {per_minute: 0.004}    # billed by tokens; measured on a 5 s clip
+  openai/whisper-1:                    {per_minute: 0.006}    # bills whole seconds, rounded up
+
+  # ---- Text to speech ----
+  hexgrad/kokoro-82m:                  {per_1k_characters: 0.00062}
+  canopylabs/orpheus-3b-0.1-ft:        {per_1k_characters: 0.007}
+  x-ai/grok-voice-tts-1.0:             {per_1k_characters: 0.015}
+  microsoft/mai-voice-2.1-flash:       {per_1k_characters: 0.015}
+  deepgram/aura-2:                     {per_1k_characters: 0.03}
+  elevenlabs/eleven-flash-v2.5:        {per_1k_characters: 0.04}

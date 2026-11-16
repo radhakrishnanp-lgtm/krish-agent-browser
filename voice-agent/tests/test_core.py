@@ -30,6 +30,19 @@ class PricingTest(unittest.TestCase):
 
 
 class ConfigTest(unittest.TestCase):
+    def test_price_text(self):
+        from server.config import price_text
+        self.assertEqual(price_text("llm", {"input_per_million": 0.14, "output_per_million": 0.42}), "$0.14 in / $0.42 out per 1M tokens")
+        self.assertEqual(price_text("tts", {"per_1k_characters": 0.00062}), "$0.00062 per 1,000 characters")
+        self.assertEqual(price_text("stt", {"per_minute": 0}, True), "free (your own endpoint)")
+        self.assertEqual(price_text("llm", None), "no price set")
+
+    def test_presets_reference_catalog_models(self):
+        cfg = Config()
+        for name in cfg.presets:
+            for kind, stage in cfg.resolve(name).items():
+                self.assertIn(stage.id, cfg.catalog[kind])
+
     def test_every_preset_resolves_and_has_rates(self):
         cfg = Config()
         for name in cfg.presets:

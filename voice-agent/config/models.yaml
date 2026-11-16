@@ -1,59 +1,157 @@
-# Model presets. Pick the active one in default.yaml (active_preset) or with VOICE_AGENT_PRESET.
-# Each stage needs: provider (from providers.yaml) and model. Every model used here
-# should have a rate in pricing.yaml.
+# The model catalog and presets.
 #
-# llm.extra is merged into the chat-completions request body as-is.
-# tts.voices is the list offered in the UI voice picker.
-presets:
-  default:
-    llm:
+# catalog:  every model the app can use, grouped by stage (llm / stt / tts). Each entry has an
+#           id (the key), a label for the UI, a provider from providers.yaml and the provider's
+#           model name. Add a model by copying an entry, then add its price to pricing.yaml.
+#           Models can also be added from the UI (Settings, "Add your own model") without
+#           touching this file; those are stored in data/custom_models.json.
+# presets:  named combinations of one llm + one stt + one tts id. default.yaml picks the one
+#           used at start-up; the UI can switch preset or any single model at any time.
+#
+# Options:  llm: max_tokens, temperature, extra (merged into the request body as-is)
+#           stt: language
+#           tts: voice (default), voices (offered in the UI), speed, format (pcm or wav)
+#
+# Speeds in the comments were measured from a cloud server on 2026-11-16 and will vary.
+catalog:
+  llm:
+    isoquant-deepseek-fast:
+      label: DeepSeek V4.1 Flash Fast (Isoquant)
       provider: isoquant
       model: deepseek-v4.1-flash-1017-fast
       max_tokens: 400
-      extra:
-        reasoning_effort: none
-        include_reasoning: false
-    stt:
+      extra: {reasoning_effort: none, include_reasoning: false}
+    deepseek-flash:                       # first words in about 0.3 s
+      label: DeepSeek V4.1 Flash
+      provider: openrouter
+      model: deepseek/deepseek-v4.1-flash
+      max_tokens: 400
+      extra: {reasoning: {enabled: false}}
+    deepseek-flash-1017:                  # about 0.4 s
+      label: DeepSeek V4.1 Flash 1017
+      provider: openrouter
+      model: deepseek/deepseek-v4.1-flash-1017
+      max_tokens: 400
+      extra: {reasoning: {enabled: false}}
+    gemma-4-31b:                          # about 0.2 s, the fastest tested
+      label: Gemma 4 31B
+      provider: openrouter
+      model: google/gemma-4-31b-it
+      max_tokens: 400
+      extra: {reasoning: {enabled: false}}
+    claude-haiku:                         # about 0.4 s
+      label: Claude Haiku 5.5
+      provider: openrouter
+      model: anthropic/claude-haiku-5.5
+      max_tokens: 400
+      extra: {reasoning: {enabled: false}}
+    gemini-flash-lite:                    # about 0.45 s
+      label: Gemini 3.1 Flash Lite
+      provider: openrouter
+      model: google/gemini-3.1-flash-lite
+      max_tokens: 400
+      extra: {reasoning: {enabled: false}}
+    mistral-small:                        # about 0.4 s
+      label: Mistral Small 2603
+      provider: openrouter
+      model: mistralai/mistral-small-2603
+      max_tokens: 400
+      extra: {reasoning: {enabled: false}}
+    ministral-8b:                         # about 0.35 s, cheapest output
+      label: Ministral 8B
+      provider: openrouter
+      model: mistralai/ministral-8b-2512
+      max_tokens: 400
+      extra: {reasoning: {enabled: false}}
+    gpt-nano:                             # about 0.8 s
+      label: GPT-5.4 Nano
+      provider: openrouter
+      model: openai/gpt-5.4-nano
+      max_tokens: 400
+      extra: {reasoning: {enabled: false}}
+
+  stt:
+    whisper-turbo:                        # about 0.45 s for a 5 s clip
+      label: Whisper Large V3 Turbo
       provider: openrouter
       model: openai/whisper-large-v3-turbo
-    tts:
+    nemotron-transcribe:                  # about 0.4 s
+      label: Nemotron 3.5 Transcribe
+      provider: openrouter
+      model: nvidia/nemotron-3.5-transcribe
+    gpt-4o-mini-transcribe:               # about 0.55 s
+      label: GPT-4o Mini Transcribe
+      provider: openrouter
+      model: openai/gpt-4o-mini-transcribe
+    gpt-4o-transcribe:                    # about 0.5 s
+      label: GPT-4o Transcribe
+      provider: openrouter
+      model: openai/gpt-4o-transcribe
+    whisper-large-v3:                     # about 1.6 s
+      label: Whisper Large V3
+      provider: openrouter
+      model: openai/whisper-large-v3
+    whisper-1:                            # about 1.6 s
+      label: Whisper 1
+      provider: openrouter
+      model: openai/whisper-1
+
+  tts:
+    kokoro:                               # first audio in about 0.4 s; by far the cheapest
+      label: Kokoro 82M
       provider: openrouter
       model: hexgrad/kokoro-82m
       voice: af_heart
       voices: [af_heart, af_bella, af_nova, af_sarah, am_adam, am_michael, am_puck, bf_emma, bf_alice, bm_george, bm_daniel]
-
-  # Same as default with a premium voice (about 25x the TTS price, slightly faster to start).
-  premium-voice:
-    llm:
-      provider: isoquant
-      model: deepseek-v4.1-flash-1017-fast
-      max_tokens: 400
-      extra:
-        reasoning_effort: none
-        include_reasoning: false
-    stt:
-      provider: openrouter
-      model: openai/whisper-large-v3-turbo
-    tts:
+    grok-voice:                           # about 0.25 s
+      label: Grok Voice
       provider: openrouter
       model: x-ai/grok-voice-tts-1.0
       voice: eve
       voices: [eve, ara, rex, sal, leo]
+    mai-voice-flash:                      # about 0.3 s
+      label: MAI Voice 2.1 Flash
+      provider: openrouter
+      model: microsoft/mai-voice-2.1-flash
+      voice: "en-AU-Isla:MAI-Voice-2.1-Flash"
+      voices: ["en-AU-Isla:MAI-Voice-2.1-Flash", "en-GB-Emily:MAI-Voice-2.1-Flash", "en-GB-Harry:MAI-Voice-2.1-Flash", "en-IN-Dhruv:MAI-Voice-2.1-Flash", "en-IN-Priya:MAI-Voice-2.1-Flash", "en-US-Ethan:MAI-Voice-2.1-Flash", "en-US-Grant:MAI-Voice-2.1-Flash", "en-US-Harper:MAI-Voice-2.1-Flash", "en-US-Iris:MAI-Voice-2.1-Flash", "en-US-Jasper:MAI-Voice-2.1-Flash", "en-US-Olivia:MAI-Voice-2.1-Flash", "en-US-Sage:MAI-Voice-2.1-Flash"]
+    eleven-flash:                         # about 0.3 s
+      label: ElevenLabs Flash v2.5
+      provider: openrouter
+      model: elevenlabs/eleven-flash-v2.5
+      voice: george
+      voices: [george, sarah, adam, alice, bella, bill, brian, callum, charlie, chris, daniel, eric]
+    aura-2:                               # about 0.35 s
+      label: Deepgram Aura 2
+      provider: openrouter
+      model: deepgram/aura-2
+      voice: aura-2-thalia-en
+      voices: [aura-2-thalia-en, aura-2-amalthea-en, aura-2-andromeda-en, aura-2-apollo-en, aura-2-arcas-en, aura-2-aries-en, aura-2-asteria-en, aura-2-athena-en, aura-2-atlas-en, aura-2-aurora-en, aura-2-callista-en, aura-2-cora-en]
+    orpheus:                              # about 0.4 s
+      label: Orpheus 3B
+      provider: openrouter
+      model: canopylabs/orpheus-3b-0.1-ft
+      voice: tara
+      voices: [tara, leah, jess, leo, dan, mia, zac]
 
-  # Everything through OpenRouter (works with only OPENROUTER_API_KEY set).
-  openrouter-only:
-    llm:
-      provider: openrouter
-      model: deepseek/deepseek-v4.1-flash-1017
-      max_tokens: 400
-      extra:
-        reasoning:
-          enabled: false
-    stt:
-      provider: openrouter
-      model: openai/whisper-large-v3-turbo
-    tts:
-      provider: openrouter
-      model: hexgrad/kokoro-82m
-      voice: af_heart
-      voices: [af_heart, af_bella, af_nova, af_sarah, am_adam, am_michael, am_puck, bf_emma, bf_alice, bm_george, bm_daniel]
+presets:
+  default:                # the project's LLM with fast, low-cost speech
+    llm: isoquant-deepseek-fast
+    stt: whisper-turbo
+    tts: kokoro
+  premium-voice:          # same, with a premium voice (about 25x the TTS price)
+    llm: isoquant-deepseek-fast
+    stt: whisper-turbo
+    tts: grok-voice
+  openrouter-only:        # works with only OPENROUTER_API_KEY set
+    llm: deepseek-flash-1017
+    stt: whisper-turbo
+    tts: kokoro
+  fastest:                # the quickest model of each kind in testing
+    llm: gemma-4-31b
+    stt: nemotron-transcribe
+    tts: grok-voice
+  cheapest:
+    llm: ministral-8b
+    stt: whisper-turbo
+    tts: kokoro

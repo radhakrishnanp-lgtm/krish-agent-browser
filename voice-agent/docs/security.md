@@ -54,6 +54,15 @@ responsibility when you deploy.
 - **Behind a proxy that changes the `Host` header**, the page may fail to connect; set
   `ALLOWED_ORIGINS` to the public host name (see `.env.example`).
 
+## Custom model endpoints
+
+"Add your own model" makes the server send requests to whatever address is typed in, and
+stores any API key entered in `data/custom_models.json` (file mode 600, never sent back to a
+browser). Anyone signed in can therefore make the server call addresses on its own network.
+That is the point of the feature (a GPU machine on your LAN), but on a deployment shared
+with people you do not fully trust, set `custom_models.enabled: false` in
+`config/default.yaml`. Only `http://` and `https://` addresses are accepted.
+
 ## Not done
 
 - No rate limiting per user beyond the connection cap and the one-second sign-in delay.

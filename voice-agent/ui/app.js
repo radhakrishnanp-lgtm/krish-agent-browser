@@ -96,6 +96,7 @@ function onMessage(m) {
     case 'audio_start': acceptAudio = true; break;
     case 'interrupt': stopPlayback(); break;
     case 'review': showReview(m); break;
+    case 'model_test': showBanner(m.ok ? m.message : `Model test failed. ${m.message}`, null, null, m.ok); break;
     case 'instructions':
       hello.instructions = m.global;
       if (conv) conv.instructions = m.conversation;
@@ -107,7 +108,7 @@ function onMessage(m) {
 function onHello(m) {
   const first = !hello || hello.session_id !== m.session_id;
   hello = m; outRate = m.output_sample_rate;
-  $('mLlm').textContent = m.models.llm; $('mStt').textContent = m.models.stt; $('mTts').textContent = m.models.tts;
+  renderModels();
   $('sid').textContent = m.session_id;
   fillSelect($('preset'), m.presets.map((p) => [p, p]), m.preset);
   const savedVoice = store.get('voiceAgentVoice');
@@ -139,9 +140,39 @@ function onHello(m) {
   add.onclick = () => $('modeDlg').showModal();
   $('modeCards').append(add);
   if (conv) renderHeader();
-  if (first) { // new connection: go back to the conversation that was open
+  if (!first) store.set('voiceAgentModels', JSON.stringify(m.selected)); // remember changes the server made too
+  if (first) { // new connection: restore this browser's model choices, then the open conversation
+    let saved = null;
+    try { saved = JSON.parse(store.get('voiceAgentModels') || 'null'); } catch (e) { /* ignore */ }
+    if (saved && ['llm', 'stt', 'tts'].some((k) => saved[k] && saved[k] !== m.selected[k] && m.catalog[k].some((x) => x.id === saved[k]))) {
+      ws.send(JSON.stringify({ type: 'set_models', ...saved }));
+    }
     const last = conv ? conv.id : store.get('voiceAgentConv');
     if (last) send({ type: 'open', id: last }); else showConversation(null);
+  }
+}
+
+const MODEL_SELECTS = { llm: ['selLlm', 'priceLlm'], stt: ['selStt', 'priceStt'], tts: ['selTts', 'priceTts'] };
+
+function renderModels() {
+  for (const [kind, [selId, priceId]] of Object.entries(MODEL_SELECTS)) {
+    const items = hello.catalog[kind];
+    fillSelect($(selId), items.map((x) => [x.id, (x.custom ? 'Yours: ' : '') + x.label + (x.ready ? '' : ' (key missing)')]), hello.selected[kind]);
+    const cur = items.find((x) => x.id === hello.selected[kind]);
+    $(priceId).textContent = cur ? `${cur.price} · ${cur.model}` : '';
+  }
+  $('addModelBtn').hidden = !hello.custom_models_allowed;
+  const box = $('customModels');
+  box.innerHTML = '';
+  for (const kind of ['llm', 'stt', 'tts']) {
+    for (const x of hello.catalog[kind].filter((c) => c.custom)) {
+      const row = el('div', null, 'cm');
+      const test = el('button', 'Test', 'btn small'); test.onclick = () => send({ type: 'test_model', kind, id: x.id });
+      const del = el('button', 'Remove', 'btn small');
+      del.onclick = () => { if (confirm(`Remove your model "${x.label}"?`)) send({ type: 'delete_model', id: x.id }); };
+      row.append(el('b', `${kind.toUpperCase()}: ${x.label}`), test, del, el('small', `${x.provider} · ${x.model} · ${x.price}`));
+      box.append(row);
+    }
   }
 }
 
@@ -414,9 +445,10 @@ function addLog(m) {
   }
 }
 
-function showBanner(text, actionLabel, action) {
+function showBanner(text, actionLabel, action, good) {
   const b = $('banner');
   b.innerHTML = '';
+  b.classList.toggle('good', !!good);
   b.append(el('span', text));
   if (action) { const a = el('button', actionLabel, 'btn small'); a.onclick = action; b.append(a); }
   const x = el('button', 'Dismiss', 'btn small'); x.onclick = hideBanner; b.append(x);
@@ -670,12 +702,36 @@ $('scrim').onclick = () => { closeSide(); if (!wide()) closeDetails(); };
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeSide(); if (!wide()) closeDetails(); } });
 for (const t of document.querySelectorAll('.tab')) t.onclick = () => selectTab(t.dataset.tab);
 
-$('preset').onchange = (e) => send({ type: 'set_preset', name: e.target.value });
+$('preset').onchange = (e) => { store.set('voiceAgentModels', null); send({ type: 'set_preset', name: e.target.value }); };
 $('voice').onchange = (e) => { store.set('voiceAgentVoice', e.target.value); sendSettings(); };
 $('speed').onchange = (e) => { store.set('voiceAgentSpeed', e.target.value); sendSettings(); };
 $('pause').onchange = (e) => { store.set('voiceAgentPause', e.target.value); sendSettings(); };
 $('recordToggle').onchange = (e) => { store.set('voiceAgentRecord', e.target.checked ? null : 'off'); sendSettings(); };
 $('search').oninput = renderConvList;
+for (const [kind, [selId]] of Object.entries(MODEL_SELECTS)) {
+  $(selId).onchange = (e) => {
+    const saved = { ...hello.selected, [kind]: e.target.value };
+    store.set('voiceAgentModels', JSON.stringify(saved));
+    send({ type: 'set_models', [kind]: e.target.value });
+  };
+}
+function modelFormKind() {
+  const k = $('mdKind').value;
+  $('mdTtsOnly').hidden = k !== 'tts';
+  $('mdPriceOutWrap').hidden = k !== 'llm';
+  $('mdPriceInLabel').textContent = k === 'llm' ? 'Price per 1M input tokens, USD (0 for your own hardware)'
+    : k === 'stt' ? 'Price per minute of audio, USD (0 for your own hardware)' : 'Price per 1,000 characters, USD (0 for your own hardware)';
+  $('mdUrl').placeholder = k === 'llm' ? 'http://192.168.1.50:11434/v1' : k === 'stt' ? 'http://192.168.1.50:8000/v1' : 'http://192.168.1.50:8880/v1';
+  $('mdModel').placeholder = k === 'llm' ? 'llama3.1:8b' : k === 'stt' ? 'Systran/faster-whisper-large-v3' : 'kokoro';
+}
+$('mdKind').onchange = modelFormKind;
+$('addModelBtn').onclick = () => { modelFormKind(); $('modelDlg').showModal(); };
+$('modelForm').onsubmit = () => {
+  send({ type: 'add_model', kind: $('mdKind').value, label: $('mdLabel').value, base_url: $('mdUrl').value, model: $('mdModel').value,
+    api_key: $('mdKey').value, voices: $('mdVoices').value, format: $('mdFormat').value, price_in: $('mdPriceIn').value, price_out: $('mdPriceOut').value });
+  $('mdKey').value = '';
+  $('modelForm').reset();
+};
 $('sensitivity').onchange = (e) => { store.set('voiceAgentSensitivity', e.target.value); sendSettings(); };
 $('micDevice').onchange = async (e) => {
   store.set('voiceAgentMic', e.target.value);

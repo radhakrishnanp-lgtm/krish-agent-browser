@@ -26,6 +26,11 @@ cost:
 logging:
   sessions_dir: logs/sessions
 
+custom_models:
+  enabled: true               # allow adding your own model endpoints from the UI. The server
+                              # will call whatever address is entered, so turn this off on a
+                              # deployment you share with people you do not fully trust.
+
 recording:
   max_total_mb: 2000          # stop saving audio once all recordings reach this size. 0 = no limit
   enabled: true               # save the audio of both sides so messages can be replayed.

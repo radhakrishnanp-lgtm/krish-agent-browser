@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime, timezone
 
 from . import pricing, providers
-from .config import ROOT, Config, ConfigError
+from .config import KINDS, ROOT, Config, ConfigError, Stage, price_text
 from .providers import ProviderError
 from .store import Store
 from .vad import SAMPLE_RATE, TurnDetector
@@ -44,6 +44,7 @@ class Session:
         self.session_id = datetime.now().strftime("%Y-%m-%d-%H-%M-%S") + "-" + uuid.uuid4().hex[:8]
         self.preset = cfg.active_preset
         self.stages = cfg.resolve(self.preset)
+        self.custom_allowed = bool((cfg.default.get("custom_models") or {}).get("enabled", True))
         self.conv: dict | None = None
         self.turns: list[dict] = []
         self.events: list[dict] = []
@@ -126,8 +127,150 @@ class Session:
             "barge_in": self.barge_in,
             "input_sample_rate": SAMPLE_RATE,
             "output_sample_rate": providers.TTS_SAMPLE_RATE,
-            "missing_keys": self.cfg.missing_keys(self.preset),
+            "missing_keys": self.missing_keys(),
+            "catalog": self.catalog(),
+            "selected": {k: s.id for k, s in self.stages.items()},
+            "custom_models_allowed": self.custom_allowed,
         }
+
+    # ---------- models ----------
+
+    def missing_keys(self) -> list[str]:
+        import os
+        return sorted({s.api_key_env for s in self.stages.values() if s.key is None and not os.environ.get(s.api_key_env, "").strip()})
+
+    def _custom_stage(self, model_id: str, spec: dict) -> Stage:
+        options = {k: spec[k] for k in ("voice", "voices", "format", "language", "max_tokens") if spec.get(k)}
+        return Stage(kind=spec["kind"], id=model_id, label=spec.get("label", ""), provider="custom", model=spec["model"],
+                     base_url=spec["base_url"], api_key_env="", options=options, key=spec.get("api_key", ""),
+                     own_rates=spec.get("rates") or {}, custom=True)
+
+    def stage_for(self, kind: str, model_id: str) -> Stage:
+        if str(model_id).startswith("custom-"):
+            spec = self.store.custom_models().get(model_id)
+            if not spec or spec.get("kind") != kind or not self.custom_allowed:
+                raise ConfigError(f"Your own {kind} model '{model_id}' no longer exists.")
+            return self._custom_stage(model_id, spec)
+        return self.cfg.stage(kind, model_id)
+
+    def catalog(self) -> dict:
+        """Every model the UI can offer, with a price line. API keys are never included."""
+        import os
+        out = {k: [] for k in KINDS}
+        for kind in KINDS:
+            for model_id in self.cfg.catalog[kind]:
+                s = self.cfg.stage(kind, model_id)
+                out[kind].append({"id": model_id, "label": s.name, "model": s.model, "provider": s.provider,
+                                  "price": price_text(kind, self.cfg.rates(s)), "custom": False,
+                                  "ready": bool(os.environ.get(s.api_key_env, "").strip())})
+        if self.custom_allowed:
+            for model_id, spec in self.store.custom_models().items():
+                if spec.get("kind") in out:
+                    out[spec["kind"]].append({"id": model_id, "label": spec.get("label") or spec["model"], "model": spec["model"],
+                                              "provider": spec["base_url"], "price": price_text(spec["kind"], spec.get("rates"), True),
+                                              "custom": True, "ready": True})
+        return out
+
+    def set_models(self, data: dict, announce: bool = True) -> None:
+        """Switch any single model: {"llm": id, "stt": id, "tts": id}; missing kinds are kept."""
+        changed = []
+        for kind in KINDS:
+            model_id = data.get(kind)
+            if not isinstance(model_id, str) or model_id == self.stages[kind].id:
+                continue
+            try:
+                self.stages[kind] = self.stage_for(kind, model_id)
+                changed.append(kind)
+            except ConfigError as e:
+                self.emit_log("warn", str(e))
+        if "tts" in changed:
+            self.user_voice = None  # voices differ between TTS models
+        if changed or announce:
+            self.send(self.hello())
+        if changed:
+            self.emit_log("info", "Models now: " + ", ".join(f"{k.upper()} {s.name}" for k, s in self.stages.items()), self.models())
+            for key in self.missing_keys():
+                self.emit_log("error", f"{key} is not set on the server, so that model will fail. Add it to voice-agent/.env and restart.")
+            self.warm()
+
+    def add_custom_model(self, data: dict) -> None:
+        if not self.custom_allowed:
+            self.emit_log("error", "Adding your own models is turned off on this server (custom_models.enabled).")
+            return
+        kind = data.get("kind")
+        label = " ".join(str(data.get("label") or "").split())[:60]
+        base_url = str(data.get("base_url") or "").strip().rstrip("/")[:300]
+        model = str(data.get("model") or "").strip()[:200]
+        if kind not in KINDS or not model or not re.match(r"^https?://[^\s/]+", base_url):
+            self.emit_log("error", "A model needs a type, a model name and an address that starts with http:// or https://.")
+            return
+
+        def price(name: str) -> float:
+            try:
+                return max(0.0, float(data.get(name) or 0))
+            except (TypeError, ValueError):
+                return 0.0
+
+        rates = {"llm": {"input_per_million": price("price_in"), "output_per_million": price("price_out")},
+                 "stt": {"per_minute": price("price_in")}, "tts": {"per_1k_characters": price("price_in")}}[kind]
+        spec = {"kind": kind, "label": label or model, "base_url": base_url, "model": model,
+                "api_key": str(data.get("api_key") or "").strip()[:400], "rates": rates}
+        if kind == "tts":
+            voices = [v.strip()[:80] for v in str(data.get("voices") or "").split(",") if v.strip()][:40]
+            if voices:
+                spec["voice"], spec["voices"] = voices[0], voices
+            spec["format"] = "wav" if data.get("format") == "wav" else "pcm"
+        if kind == "llm":
+            spec["max_tokens"] = 400
+        try:
+            model_id = self.store.save_custom_model(spec)
+        except OSError as e:
+            self.emit_log("error", f"Could not save the model: {e}")
+            return
+        self.emit_log("info", f"Added your {kind.upper()} model '{spec['label']}' at {base_url}")
+        self.set_models({kind: model_id})
+        self.spawn(self.test_model(kind, model_id))
+
+    def delete_custom_model(self, model_id) -> None:
+        spec = self.store.custom_models().get(str(model_id))
+        if not spec or not self.store.delete_custom_model(model_id):
+            return
+        kind = spec.get("kind")
+        if kind in self.stages and self.stages[kind].id == model_id:
+            self.stages[kind] = self.cfg.resolve(self.preset)[kind]  # fall back to the preset's model
+        self.emit_log("info", f"Removed your model '{spec.get('label')}'")
+        self.send(self.hello())
+
+    async def test_model(self, kind: str, model_id: str) -> None:
+        """One small real call, so a wrong address or model name shows up immediately."""
+        t = time.monotonic()
+        try:
+            stage = self.stage_for(kind, model_id)
+            if kind == "llm":
+                text = ""
+                async for chunk in providers.chat_stream(dataclasses.replace(stage, options={**stage.options, "max_tokens": 20}),
+                                                         [{"role": "user", "content": "Reply with the single word: ready"}]):
+                    text += chunk.get("delta", "")
+                detail = f'it answered "{text.strip()[:40]}"'
+                if not text.strip():
+                    raise ProviderError(stage, "it returned an empty reply")
+            elif kind == "tts":
+                n = 0
+                async for audio in providers.synthesize(stage, "This is a test."):
+                    n += len(audio)
+                if not n:
+                    raise ProviderError(stage, "it returned no audio")
+                detail = f"it produced {n / 2 / providers.TTS_SAMPLE_RATE:.1f} s of audio"
+            else:
+                res = await providers.transcribe(stage, b"\x00" * SAMPLE_RATE * 2, SAMPLE_RATE)
+                detail = f'it accepted one second of silence and returned "{res["text"][:40]}"'
+        except (ProviderError, ConfigError) as e:
+            self.emit_log("error", f"Model test failed. {e}")
+            self.send({"type": "model_test", "id": model_id, "ok": False, "message": str(e)})
+            return
+        ms = int((time.monotonic() - t) * 1000)
+        self.emit_log("info", f"Model test passed for {stage.name}: {detail}, in {ms} ms")
+        self.send({"type": "model_test", "id": model_id, "ok": True, "message": f"{stage.name} works: {detail}, in {ms} ms."})
 
     def emit_cost(self, turn: dict | None) -> None:
         self.send({
@@ -319,7 +462,7 @@ class Session:
         self.user_voice = None  # voices differ between TTS models
         self.send(self.hello())
         self.emit_log("info", f"Preset switched to '{name}'", self.models())
-        missing = self.cfg.missing_keys(name)
+        missing = self.missing_keys()
         if missing:
             self.emit_log("error", f"Missing API key(s) for this preset: {', '.join(missing)}. Add them to voice-agent/.env and restart.")
         self.warm()
@@ -435,6 +578,8 @@ class Session:
     # ---------- the turn pipeline ----------
 
     def _add_cost(self, turn: dict, kind: str, cost: float, source: str) -> None:
+        if self.stages[kind].custom:
+            source = source.replace("pricing.yaml", "your price")
         turn[f"{kind}_cost"] = round(turn[f"{kind}_cost"] + cost, 8)
         turn["cost_sources"][kind] = source
         turn["turn_total"] = round(turn["llm_cost"] + turn["stt_cost"] + turn["tts_cost"], 8)

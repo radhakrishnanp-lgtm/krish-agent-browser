@@ -45,6 +45,18 @@ Status as of 2026-11-16. "Verified" means it was run and observed, with what was
 | Sign-in cookie, origin check, headers, limits | Verified | See `docs/security.md` |
 | Auto-reconnect | Verified | Server stopped and restarted; the page reconnected to the same conversation and stayed signed in |
 
+## Fifth round: model catalog, your own endpoints, playbook
+
+| Feature | Status | How it was checked |
+|---|---|---|
+| 20 OpenRouter models in the catalog (8 LLM, 6 STT, 6 TTS) | Verified | One live test call each; all passed |
+| Switch any single model in the UI; remembered per browser | Verified | Headless browser; the turn log showed the new model |
+| Add your own endpoint (LLM, STT, TTS), test, remove | Verified against a stand-in server | No API key, no usage block, WAV and 22 kHz PCM audio all worked. Not tried against Ollama, vLLM, Speaches or Kokoro-FastAPI |
+| Clear error for a wrong address | Verified | "could not connect to ..." |
+| TTS at sample rates other than 24 kHz | Verified | 44.1 kHz and 22 kHz are converted; a 440 Hz tone stayed at 440 Hz |
+| Docker image | Verified | Built (465 MB), started, served the UI, signed in, wrote to the data volume. The build here needed this sandbox's proxy certificate, which a normal machine does not |
+| `docker compose up` | Not tested | |
+
 ## Not yet verified
 
 - **The Isoquant LLM call.** No Isoquant key was available, so the `default` and `premium-voice`
@@ -53,7 +65,7 @@ Status as of 2026-11-16. "Verified" means it was run and observed, with what was
   key is in `.env`.
 - **A real microphone and speakers.** Tests used recorded audio, so echo and barge-in behaviour
   with real speakers is untested.
-- **The Docker image.** The Dockerfile was written but not built.
+- **Real local model servers and a real deployment.** See `PLAYBOOK.md`, part 9.
 
 ## Differences from the original plan
 

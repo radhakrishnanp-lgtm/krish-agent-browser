@@ -1,4 +1,5 @@
 # One entry per API provider. Keys are read from the environment (.env), never from this file.
+# Any server that speaks the OpenAI API can be a provider.
 providers:
   isoquant:
     base_url: https://api.isoquant.ai/v1
@@ -6,3 +7,9 @@ providers:
   openrouter:
     base_url: https://openrouter.ai/api/v1
     api_key_env: OPENROUTER_API_KEY
+
+  # Your own GPU machine, as an alternative to adding it in the UI. Leave api_key_env out
+  # if the server needs no key. Then reference "provider: my-gpu" from a catalog entry in
+  # models.yaml and add a price of 0 for it in pricing.yaml. See PLAYBOOK.md, part 5.
+  # my-gpu:
+  #   base_url: http://192.168.1.50:11434/v1

@@ -5,7 +5,18 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./data:/app/data                     # saved conversations
-      - ./logs/sessions:/app/logs/sessions   # debug logs
+      - voice-data:/app/data                 # conversations, recordings, your modes, models and instructions
+      - voice-logs:/app/logs/sessions        # debug logs
       - ./config:/app/config:ro              # edit YAML without rebuilding
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+# Named volumes are owned by the container's non-root user, so no chown is needed.
+# Back up with:  docker run --rm -v voice-agent_voice-data:/d -v "$PWD":/b alpine tar czf /b/voice-data.tgz -C /d .
+volumes:
+  voice-data:
+  voice-logs:

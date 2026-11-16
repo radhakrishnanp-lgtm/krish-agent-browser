@@ -202,7 +202,7 @@ async def _serve(ws: WebSocket) -> None:
             return
         session.send(session.hello())
         session.emit_log("info", f"Session {session.session_id} started with preset '{session.preset}'", session.models())
-        for key in cfg.missing_keys(session.preset):
+        for key in session.missing_keys():
             session.emit_log("error", f"{key} is not set on the server. Add it to voice-agent/.env and restart.")
         session.send_conversations()
         session.emit_cost(None)
@@ -249,6 +249,17 @@ async def _serve(ws: WebSocket) -> None:
                 session.save_custom_mode(data.get("name"), data.get("instructions"), data.get("greeting"))
             elif kind == "delete_mode":
                 session.delete_custom_mode(data.get("id"))
+            elif kind == "set_models":
+                await session.cancel_turn()
+                session.set_models(data, announce=False)
+            elif kind == "add_model":
+                session.add_custom_model(data)
+            elif kind == "delete_model":
+                await session.cancel_turn()
+                session.delete_custom_model(data.get("id"))
+            elif kind == "test_model":
+                if data.get("kind") in ("llm", "stt", "tts"):
+                    session.spawn(session.test_model(data["kind"], str(data.get("id"))))
             elif kind == "set_preset":
                 await session.cancel_turn()
                 session.set_preset(str(data.get("name")))

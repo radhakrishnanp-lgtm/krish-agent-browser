@@ -143,12 +143,12 @@
       <div id="themes" class="themes"></div>
 
       <h3>Models</h3>
-      <label class="field">Model preset<select id="preset"></select></label>
-      <dl class="models">
-        <dt>LLM</dt><dd id="mLlm">–</dd>
-        <dt>Speech to text</dt><dd id="mStt">–</dd>
-        <dt>Text to speech</dt><dd id="mTts">–</dd>
-      </dl>
+      <label class="field">Preset (sets all three)<select id="preset"></select></label>
+      <label class="field">Language model<select id="selLlm"></select><span id="priceLlm" class="price"></span></label>
+      <label class="field">Speech to text<select id="selStt"></select><span id="priceStt" class="price"></span></label>
+      <label class="field">Text to speech<select id="selTts"></select><span id="priceTts" class="price"></span></label>
+      <button id="addModelBtn" class="btn wide">Add your own model…</button>
+      <div id="customModels"></div>
       <h3>This conversation</h3>
       <button id="audioBtn" class="btn wide">Download the recording (WAV)</button>
       <button id="exportBtn" class="btn wide">Export as text</button>
@@ -182,6 +182,35 @@
         <div class="count"><span id="instrConvCount">0</span> / 2000</div>
       </div>
       <div class="dlgfoot"><span class="spacer"></span><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary">Save</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="modelDlg" class="dlg">
+    <form id="modelForm" method="dialog">
+      <div class="dlghead"><h2>Add your own model</h2><button type="button" class="btn icon" data-close aria-label="Close">✕</button></div>
+      <div class="dlgbody">
+        <p class="muted lead">Any server that speaks the OpenAI API works: a model on your own GPU, or another cloud provider. The voice agent's server must be able to reach the address.</p>
+        <label class="field">Type
+          <select id="mdKind">
+            <option value="llm">Language model (chat)</option>
+            <option value="stt">Speech to text</option>
+            <option value="tts">Text to speech</option>
+          </select>
+        </label>
+        <label class="field">Name shown in the list<input id="mdLabel" type="text" maxlength="60" placeholder="My RTX: Llama 3"></label>
+        <label class="field">Address (base URL)<input id="mdUrl" type="text" maxlength="300" required placeholder="http://192.168.1.50:11434/v1"></label>
+        <label class="field">Model name<input id="mdModel" type="text" maxlength="200" required placeholder="llama3.1:8b"></label>
+        <label class="field">API key (leave empty if none)<input id="mdKey" type="password" maxlength="400" autocomplete="off"></label>
+        <div id="mdTtsOnly" hidden>
+          <label class="field">Voices, separated by commas (first is the default)<input id="mdVoices" type="text" placeholder="af_heart, am_adam"></label>
+          <label class="field">Audio format the server returns
+            <select id="mdFormat"><option value="pcm">Raw PCM (fastest, streams)</option><option value="wav">WAV (works with most servers)</option></select>
+          </label>
+        </div>
+        <label class="field"><span id="mdPriceInLabel">Price per 1M input tokens, USD (0 for your own hardware)</span><input id="mdPriceIn" type="text" inputmode="decimal" value="0"></label>
+        <label class="field" id="mdPriceOutWrap">Price per 1M output tokens, USD<input id="mdPriceOut" type="text" inputmode="decimal" value="0"></label>
+      </div>
+      <div class="dlgfoot"><span class="muted">It is tested as soon as you add it.</span><span class="spacer"></span><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary">Add and test</button></div>
     </form>
   </dialog>
 
