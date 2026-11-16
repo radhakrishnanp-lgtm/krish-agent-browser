@@ -1,5 +1,8 @@
 .env
-.venv
-logs/sessions/*
-__pycache__
-data/conversations/*
+.git
+target
+vendor
+data
+logs
+docs
+*.md

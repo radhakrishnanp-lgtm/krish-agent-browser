@@ -1,6 +1,6 @@
 # Security
 
-Reviewed on 2026-11-16. This lists what was checked, what was fixed, and what is still your
+Reviewed on 2026-11-16. Every check below was run again after the server was rewritten in Rust, with the same results. This lists what was checked, what was fixed, and what is still your
 responsibility when you deploy.
 
 ## Fixed in this review
@@ -11,6 +11,7 @@ responsibility when you deploy.
 | Any website you visited could open the voice WebSocket from your browser (cross-site WebSocket hijacking), most serious when no token was set | The server refuses WebSocket connections whose `Origin` is not the site itself |
 | No browser security headers | Content-Security-Policy (own scripts only, no inline script, no framing), `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy: no-referrer`, a microphone-only Permissions-Policy |
 | A client could send unlimited-size messages or open unlimited connections | WebSocket messages over 2 MB drop the connection; at most 20 connections (`server.max_connections`) |
+| Request URLs were written to the server's access log | The Rust server keeps no access log |
 | Recordings could fill the disk | `recording.max_total_mb` (default 2000) stops new recordings at the limit |
 | Wrong-token attempts were answered instantly | Each failed sign-in waits one second |
 | The automatic API documentation pages were public | Disabled |
@@ -27,7 +28,10 @@ responsibility when you deploy.
   sent to the WebSocket; the session kept working and nothing crashed.
 - **Secrets.** API keys are read from the environment only, are never sent to the browser,
   and `.env` is excluded from git and from the Docker image.
-- **Dependencies.** `pip-audit` reported no known vulnerabilities in `requirements.txt`.
+- **Dependencies.** `cargo audit` on 2026-11-16 scanned 211 crates and found no known
+  vulnerabilities. It gave one warning: the YAML parser's underlying library
+  (`unsafe-libyaml`, via `serde_yaml`) is no longer maintained. It only ever reads the
+  config files you wrote, never anything from the network. Re-run with `cargo audit`.
 - **Container.** Runs as a non-root user.
 
 ## What is still up to you
@@ -36,7 +40,7 @@ responsibility when you deploy.
   can use it and spend your API credits. Generate one with:
 
   ```bash
-  python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+  openssl rand -base64 32
   ```
 
 - **Serve over HTTPS.** The sign-in cookie is marked `Secure` only when the request arrives
@@ -64,6 +68,7 @@ with people you do not fully trust, set `custom_models.enabled: false` in
 `config/default.yaml`. Only `http://` and `https://` addresses are accepted.
 
 ## Not done
+
 
 - No rate limiting per user beyond the connection cap and the one-second sign-in delay.
 - No audit log of sign-ins.

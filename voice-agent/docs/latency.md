@@ -18,6 +18,27 @@ Where the time goes in a typical turn:
 | LLM first sentence | 400 to 1000 ms | The most variable step |
 | Text to speech, first audio | 250 to 900 ms | Depends on the voice model |
 
+## Does the Rust server make replies faster?
+
+Not noticeably, and it is worth being clear about why. Almost all of the reply time is spent
+waiting for the three model APIs over the network. The server's own work per turn was about
+15 to 20 ms in both the earlier Python version and the Rust version (measured with a local
+stand-in model server that answers instantly), so there was little to gain there.
+
+What Rust did change, measured on the same machine:
+
+| | Python version | Rust version |
+|---|---|---|
+| Memory when idle | 86 MB | about 50 MB |
+| Start-up to first response | not measured | 87 ms |
+| What you deploy | Python plus packages | one 9 MB program plus the ONNX Runtime library |
+| Conversation list | read every file after each turn | kept in memory |
+
+To make replies faster, change what the time is actually spent on: pick a faster model for
+the slow stage (the Logs tab shows which), shorten the pause setting, or run models closer
+to the server. On the day of testing the default voice model itself swung between 0.3 and
+5 seconds to first audio, on both versions.
+
 ## What the app does to be fast
 
 - **Early transcription.** After 250 ms of silence the audio is sent to STT, before the turn

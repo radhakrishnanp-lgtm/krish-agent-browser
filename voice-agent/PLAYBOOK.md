@@ -23,9 +23,12 @@ unless stated otherwise.
 A browser app for talking with an AI. Speech goes in, speech comes out. Every model runs
 behind an HTTP API, in the cloud or on your own machine; the app itself needs no GPU.
 
+The server is one Rust program (about 9 MB, starts in under 0.1 s, about 50 MB of memory).
+The UI is plain HTML, CSS and JavaScript with no build step.
+
 ```
 Browser (ui/)                       one WebSocket: /ws
-   microphone audio  ───────────►  Server (server/, FastAPI, Python)
+   microphone audio  ───────────►  Server (src/, Rust: axum + tokio)
    reply audio       ◄───────────     1. VAD    Silero, on CPU: when did you start and stop talking
    text, cost, logs  ◄───────────     2. STT    speech -> text      (HTTP API)
                                       3. LLM    text -> reply       (HTTP API, streamed)
@@ -40,7 +43,8 @@ What is stored, and where:
 
 | Data | Location | Notes |
 |---|---|---|
-| Conversations | `data/conversations/<id>.json` | Text, cost totals, feedback report, per-conversation instructions |
+| Conversations | `data/conversations/<id>.json` | Text, cost totals, feedback report, per-conversation instructions, folder |
+| Folders | `data/folders.json` | Names and order |
 | Recordings | `data/audio/<id>/NNNN-user.wav`, `NNNN-assistant.wav` | 2 to 3 MB per minute of speech |
 | Modes made in the UI | `data/custom_modes.json` | |
 | Models added in the UI | `data/custom_models.json` | Can contain API keys; file mode 600 |
@@ -55,7 +59,8 @@ it shares the same conversations.
 
 ## 2. Run it
 
-Needs Python 3.11 or newer.
+Needs Rust (install from https://rustup.rs) or Docker (part 6). The first build takes a
+few minutes; later ones take seconds.
 
 ```bash
 cd voice-agent
@@ -73,28 +78,25 @@ OPENROUTER_API_KEY=...
 ACCESS_TOKEN=...            # required on anything reachable from the internet
 ```
 
-```bash
-pip install -r requirements.txt
-```
-
-```bash
-python3 scripts/smoke_test.py
-```
-
-The smoke test makes one real call each to TTS, STT and LLM for the active preset and prints
-PASS or FAIL with the provider's own error. To test a different preset:
-
-```bash
-python3 scripts/smoke_test.py openrouter-only
-```
-
-Start the server:
+Start the server. The script downloads ONNX Runtime once (used for voice detection),
+builds the program and runs it:
 
 ```bash
 ./scripts/start-server.sh
 ```
 
 Open http://localhost:8080. The UI is served by the same process.
+
+To check your keys and models without the UI, run the smoke test. It makes one real call
+each to TTS, STT and LLM and prints PASS or FAIL with the provider's own error:
+
+```bash
+./target/release/voice-agent --smoke
+```
+
+```bash
+./target/release/voice-agent --smoke openrouter-only
+```
 
 With only an OpenRouter key, set `active_preset: openrouter-only` in `config/default.yaml`
 (or `VOICE_AGENT_PRESET=openrouter-only` in `.env`).
@@ -110,6 +112,8 @@ button and talk. Pause and it answers. Talk over it to interrupt. You can also t
 |---|---|---|
 | Modes | Start screen | English practice, Jokes and fun, Anything, plus your own ("Create your own") |
 | Saved conversations | Left sidebar | Click to resume; the assistant remembers. Rename, delete, search |
+| Folders | Left sidebar, "+ Folder" | Drag a conversation onto a folder, or use its move button (⇄). Rename, delete, reorder by dragging, open and close. Deleting a folder keeps its conversations |
+| Layout | Edges of the side panels | Drag an edge to resize, double-click to reset, « hides the sidebar. Settings sections open and close. All remembered per browser |
 | Replay | "Play" under a message | Hear your own recording or the reply again |
 | Feedback | "Feedback" button (English practice) | Mistakes with corrections, level, what to practise |
 | Instructions | "Instructions" button | Rules for every conversation, and extra rules for the open one |
@@ -251,7 +255,7 @@ Three ways, from quickest to most permanent:
 
    Then reload the page, select the model in Settings, type one message and read the Logs
    tab. Or test without the UI by putting the model in a preset and running
-   `python3 scripts/smoke_test.py <preset>`.
+   `./target/release/voice-agent --smoke <preset>`.
 
 **TTS models must return raw PCM** (`response_format: pcm`). Any sample rate is converted.
 A model that only returns MP3 (MiniMax speech did in testing) will not work.
@@ -373,9 +377,7 @@ my-gpu:
 
 ## 6. Deploy
 
-The app is one container on one port. The Docker image was built and run in testing
-(465 MB: it started, served the UI, accepted a sign-in and wrote data). `docker compose`,
-your domain, an HTTPS proxy and specific clouds were not tried.
+The app is one container on one port. See part 9 for what was and was not tried.
 
 ### Environment variables
 
@@ -391,7 +393,7 @@ your domain, an HTTPS proxy and specific clouds were not tried.
 Make a token:
 
 ```bash
-python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+openssl rand -base64 32
 ```
 
 ### Option A: Docker Compose on a server
@@ -469,7 +471,8 @@ docker run --rm -v voice-agent_voice-data:/d -v "$PWD":/b alpine tar czf /b/voic
 docker run --rm -v voice-agent_voice-data:/d -v "$PWD":/b alpine tar xzf /b/voice-data.tgz -C /d
 ```
 
-Without Docker, copy the `data/` folder.
+Without Docker, copy the `data/` folder. Restart the server after restoring: it keeps the
+conversation list in memory.
 
 ### Update
 
@@ -556,10 +559,10 @@ folder.
 3. **Do not claim something works unless you ran it.** Say what you ran and what you saw.
    If you could not test (no key, no microphone, no GPU), say so in those words and record
    it in `docs/checkpoints.md`.
-4. **Real calls cost money.** Unit tests and `scripts/check.sh` are free. `smoke_test.py`,
+4. **Real calls cost money.** Unit tests and `scripts/check.sh` are free. `--smoke`,
    the UI and "Test" buttons make paid calls (fractions of a cent). Do not loop them.
 5. **Configuration belongs in YAML, not code.** Models, prices, prompts and thresholds are
-   in `config/`. Do not hard-code a model name or a price in Python or JavaScript.
+   in `config/`. Do not hard-code a model name or a price in Rust or JavaScript.
 6. **Keep the UI free of HTML injection.** Insert text with `textContent`. Never build HTML
    from conversation text, model names or anything a user typed. No inline `<script>` or
    `style=` attributes: the Content-Security-Policy blocks them.
@@ -578,26 +581,31 @@ folder.
 | `config/pricing.yaml` | Rates | Adding a model, updating prices |
 | `config/providers.yaml` | Provider base URLs and key variable names | Adding a provider |
 | `config/modes.yaml` | Conversation modes | Changing assistant behaviour |
-| `server/config.py` | Loads and validates all YAML; `Stage`, `price_text` | Config format changes |
-| `server/providers.py` | The three HTTP calls; error messages; audio conversion | Provider quirks |
-| `server/session.py` | One connection: turn pipeline, cost, modes, models, instructions, feedback | Most behaviour changes |
-| `server/store.py` | Files under `data/`: conversations, audio, custom modes and models, profile | Persistence |
-| `server/vad.py` | Turn detection | Rarely |
-| `server/pricing.py` | Cost arithmetic | Rarely |
-| `server/main.py` | HTTP and WebSocket endpoints, sign-in, security headers | New endpoints or messages |
+| `src/config.rs` | Loads and validates all YAML; `Stage`, `price_text` | Config format changes |
+| `src/providers.rs` | The three HTTP calls; error messages; audio conversion | Provider quirks |
+| `src/session.rs` | One connection: turn pipeline, cost, modes, models, instructions, feedback, folders | Most behaviour changes |
+| `src/store.rs` | Files under `data/`: conversations, audio, folders, custom modes and models, instructions | Persistence |
+| `src/vad.rs` | Voice detection (Silero model through ONNX Runtime) and turn detection | Rarely |
+| `src/pricing.rs` | Cost arithmetic | Rarely |
+| `src/main.rs` | HTTP and WebSocket endpoints, sign-in, security headers, message dispatch | New endpoints or messages |
+| `src/cli.rs` | `--check` and `--smoke` | New checks |
+| `assets/silero_vad.onnx` | The voice-detection model (2 MB) | Never |
+| `Cargo.toml`, `Cargo.lock` | Rust dependencies | Adding a dependency |
 | `ui/index.html`, `ui/style.css`, `ui/app.js` | The whole UI, no build step | UI changes |
 | `ui/theme.js` | Theme applied before first paint | Themes |
 | `ui/mic-worklet.js` | Microphone capture and resampling | Rarely |
 | `scripts/check.sh` | Free checks | Run before every commit |
-| `scripts/smoke_test.py` | One paid call per stage | After model or provider changes |
-| `tests/test_core.py` | Unit tests | Add a test with each logic change |
+| `scripts/get-onnxruntime.sh` | Downloads ONNX Runtime into `vendor/` | Once per machine |
+| `voice-agent --smoke [preset]` | One paid call per stage | After model or provider changes |
+| `#[cfg(test)]` blocks in `src/*.rs` | Unit tests (`cargo test --release`) | Add a test with each logic change |
 | `docs/` | Cost, latency, security, models, checkpoints | Keep in step with the code |
 
 ### WebSocket protocol
 
 Browser to server: binary frames are 16 kHz mono 16-bit PCM microphone audio. JSON frames:
 
-`text`, `new`, `open`, `close`, `delete`, `rename`, `settings`, `set_preset`, `set_models`,
+`text`, `new`, `open`, `close`, `delete`, `rename`, `move`, `folder_create`, `folder_rename`,
+`folder_delete`, `folder_order`, `settings`, `set_preset`, `set_models`,
 `add_model`, `delete_model`, `test_model`, `set_instructions`, `review`, `save_mode`,
 `delete_mode`, `raw`, `stop`.
 
@@ -607,7 +615,7 @@ Server to browser: binary frames are 24 kHz mono 16-bit PCM reply audio. JSON fr
 `conversation`, `conversation_meta`, `status`, `transcript`, `cost`, `log`, `raw`, `error`,
 `audio_start`, `audio_end`, `interrupt`, `review`, `instructions`, `model_test`.
 
-Handlers are in `server/main.py` (`_serve`) and `ui/app.js` (`onMessage`). A new message
+Handlers are in `src/main.rs` (`handle`) and `ui/app.js` (`onMessage`). A new message
 needs both sides.
 
 ### How to verify a change
@@ -621,7 +629,7 @@ Always:
 If you touched models, providers or pricing, and a key is available:
 
 ```bash
-python3 scripts/smoke_test.py openrouter-only
+./target/release/voice-agent --smoke openrouter-only
 ```
 
 If you touched the server or the UI, run it and exercise the change in a real browser:
@@ -646,7 +654,7 @@ part 4 of this playbook with the price and a measured speed.
 
 **Add a provider.** Add it to `config/providers.yaml` with `base_url` and `api_key_env`, add
 the variable to `.env.example`, add catalog entries and prices. If its API differs from the
-OpenAI shape, adapt it in `server/providers.py` only.
+OpenAI shape, adapt it in `src/providers.rs` only.
 
 **Add or change a mode.** Edit `config/modes.yaml`. Fields are documented at the top of that
 file. Reload the page. Prompts must tell the model its reply is spoken: short, no markdown.
@@ -655,15 +663,15 @@ file. Reload the page. Prompts must tell the model its reply is spoken: short, n
 date in its header and the tables in part 4.
 
 **Debug "it does not answer".** In order: `/healthz` for missing keys; the Logs tab for a
-red line; the server output for a traceback; `python3 scripts/smoke_test.py <preset>` to
+red line; the server output for an error; `./target/release/voice-agent --smoke <preset>` to
 see which stage fails; the model's "Test" button for a custom model.
 
 **Debug "it is slow".** Read one turn in the Logs tab. "waited N ms" is STT, "first token"
 is the LLM, "first audio" is TTS. Change the slowest stage's model. `docs/latency.md`.
 
 **Add a setting.** Default in `config/default.yaml` with a comment; read it in
-`Session.__init__`; if users may override it, send it in the `settings` message from
-`sendSettings()` in `ui/app.js` and apply it in `Session.apply_settings`.
+`Session::new`; if users may override it, send it in the `settings` message from
+`sendSettings()` in `ui/app.js` and apply it in `Session::apply_settings`.
 
 **Deploy.** Part 6. Do not deploy, push to a protected branch, or change a live environment
 unless the user asked for exactly that.
@@ -684,14 +692,17 @@ As of 2026-11-16:
 
 - **The Isoquant LLM.** No Isoquant key was available. The endpoint answers and rejects a
   missing key correctly, but no turn has run through it. Its price is from the project plan.
-  First thing to do with a key: `python3 scripts/smoke_test.py default`.
+  First thing to do with a key: `./target/release/voice-agent --smoke default`.
 - **A real microphone and real speakers.** Voice tests used recordings fed to a simulated
   microphone. Echo, interruption with loudspeakers, sensitivity in a noisy room and speaker
   selection are untested.
 - **Real local model servers.** The custom endpoint feature was tested against a stand-in
   server, not against Ollama, vLLM, Speaches or Kokoro-FastAPI themselves.
-- **A real deployment.** The Docker image was built and run locally. HTTPS proxies, tunnels
-  and specific hosting platforms were not tried.
+- **A real deployment.** The Docker image was built (187 MB) and a real turn ran inside the
+  container. `docker compose`, HTTPS proxies, tunnels and specific hosting platforms were
+  not tried. Only Linux x86-64 was built and run; macOS, Windows and ARM were not.
+- **Restoring data under a running server.** The server keeps the conversation list in
+  memory. After copying files into `data/` by hand, restart it.
 - **Speeds and prices** were measured once or twice on one day and will drift.
 
 `docs/checkpoints.md` has the full list of what was checked and how.

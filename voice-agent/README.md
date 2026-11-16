@@ -25,6 +25,8 @@ deploy and operate, plus instructions for AI coding agents.
   each with its price shown. Switch any of them at any time in Settings.
 - **Your own models:** add any OpenAI-compatible endpoint (for example a model on your own
   GPU) from the UI; it is tested as soon as you add it.
+- **Folders and a flexible layout:** group conversations into folders by drag and drop;
+  resize and collapse the panels.
 - **Built for speed:** replies are spoken sentence by sentence while the LLM is still writing.
   See [docs/latency.md](docs/latency.md).
 - **Live cost, logs and reply time** for every turn.
@@ -32,7 +34,7 @@ deploy and operate, plus instructions for AI coding agents.
 ```
 Browser UI (conversations, transcript, cost, logs, settings)
         |  WebSocket (/ws)
-Server (FastAPI)
+Server (Rust: axum + tokio)
    VAD  Silero, ONNX, CPU      detects when you start and stop speaking
    STT  OpenRouter             speech -> text
    LLM  Isoquant               deepseek-v4.1-flash-1017-fast
@@ -44,9 +46,8 @@ Server (FastAPI)
 ```bash
 cd voice-agent
 cp .env.example .env        # then add ISOQUANT_API_KEY and OPENROUTER_API_KEY
-pip install -r requirements.txt
-python3 scripts/smoke_test.py    # one call to each of TTS, STT and LLM; prints PASS/FAIL and cost
-./scripts/start-server.sh
+./scripts/start-server.sh        # needs Rust (https://rustup.rs); builds, then runs
+./target/release/voice-agent --smoke   # optional: one real call to each of TTS, STT and LLM
 ```
 
 Open http://localhost:8080, pick a mode, tap the round microphone button and speak. You can
@@ -109,9 +110,9 @@ Or change any model from the UI at any time. The catalog and prices are in
 | `config/models.yaml` | Presets: which LLM / STT / TTS model each one uses |
 | `config/providers.yaml` | Provider base URLs and which env var holds each key |
 | `config/pricing.yaml` | Cost rates |
-| `server/` | `main.py` (web server), `session.py` (turn pipeline + cost + log), `store.py` (saved conversations), `providers.py` (the three API calls), `vad.py`, `pricing.py`, `config.py` |
+| `src/` | The Rust server: `main.rs` (web server), `session.rs` (turn pipeline, cost, log), `store.rs` (saved data), `providers.rs` (the three API calls), `vad.rs`, `pricing.rs`, `config.rs`, `cli.rs` |
 | `ui/` | The browser UI (plain HTML, CSS and JS, no build step) |
-| `scripts/` | `start-server.sh`, `check.sh` (free checks), `smoke_test.py` (one paid call per stage) |
+| `scripts/` | `start-server.sh`, `check.sh` (free checks), `get-onnxruntime.sh`. The binary itself has `--check` and `--smoke` |
 | `data/custom_models.json` | Models added in the UI |
 | `data/conversations/` | Saved conversations, one JSON file each |
 | `data/audio/` | Recordings, one folder per conversation |
@@ -123,7 +124,7 @@ Or change any model from the UI at any time. The catalog and prices are in
 ## Tests
 
 ```bash
-python3 -m unittest discover tests
+./scripts/check.sh
 ```
 
 ## Troubleshooting

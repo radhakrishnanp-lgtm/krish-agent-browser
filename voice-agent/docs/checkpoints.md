@@ -54,14 +54,30 @@ Status as of 2026-11-16. "Verified" means it was run and observed, with what was
 | Add your own endpoint (LLM, STT, TTS), test, remove | Verified against a stand-in server | No API key, no usage block, WAV and 22 kHz PCM audio all worked. Not tried against Ollama, vLLM, Speaches or Kokoro-FastAPI |
 | Clear error for a wrong address | Verified | "could not connect to ..." |
 | TTS at sample rates other than 24 kHz | Verified | 44.1 kHz and 22 kHz are converted; a 440 Hz tone stayed at 440 Hz |
-| Docker image | Verified | Built (465 MB), started, served the UI, signed in, wrote to the data volume. The build here needed this sandbox's proxy certificate, which a normal machine does not |
+| Docker image (earlier Python version, since replaced) | Verified | Built (465 MB), started, served the UI, signed in, wrote to the data volume. The build here needed this sandbox's proxy certificate, which a normal machine does not |
 | `docker compose up` | Not tested | |
+
+## Sixth round: folders, flexible layout, Rust server
+
+| Feature | Status | How it was checked |
+|---|---|---|
+| Folders: create, rename, delete, reorder, collapse | Verified | Headless browser, on both the old and the new server |
+| Move a conversation by drag and drop, and by the move dialog | Verified | Drag onto a folder, drag out to "Not in a folder", dialog path |
+| Deleting a folder keeps its conversations | Verified | Three conversations still listed afterwards |
+| Resize sidebar and details by dragging; collapse the sidebar; remembered after reload | Verified | Widths 400 and 500 px kept; sidebar stayed hidden after reload |
+| Settings sections open and close | Verified | Closed section hid its controls |
+| Server rewritten in Rust with the same behaviour | Verified | The whole earlier test battery was re-run against it: conversations and resume, barge-in, all 20 OpenRouter models, custom endpoints, 12 path-traversal attempts, sign-in, origin check, limits, recordings, feedback, modes, themes, microphone test, instructions, reconnect |
+| Rust unit tests | Verified | 17 pass (`cargo test --release`) |
+| Docker image (Rust) | Verified | Built (187 MB), ran as a non-root user using 28 MB of memory, completed a real turn and saved it to a named volume. The build here needed this sandbox's proxy certificate, which a normal machine does not |
+| ONNX Runtime versions | Verified with 1.23.2 (downloaded) and 1.29.0 | Voice detection output matched the Python reference to 8 decimal places |
+| `docker compose up` | Not tested | |
+| macOS, Windows, ARM | Not tested | Built and run on Linux x86-64 only |
 
 ## Not yet verified
 
 - **The Isoquant LLM call.** No Isoquant key was available, so the `default` and `premium-voice`
   presets have not been run end to end. The Isoquant endpoint was reached and answered
-  "invalid API key", so the URL is right. Run `python3 scripts/smoke_test.py default` once the
+  "invalid API key", so the URL is right. Run `./target/release/voice-agent --smoke default` once the
   key is in `.env`.
 - **A real microphone and speakers.** Tests used recorded audio, so echo and barge-in behaviour
   with real speakers is untested.

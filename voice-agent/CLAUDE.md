@@ -5,6 +5,7 @@ rules, file map, WebSocket protocol, recipes and the definition of done.
 
 The short version:
 
+- The server is Rust (`src/`), the UI is plain JavaScript (`ui/`).
 - Run `./scripts/check.sh` before every commit. It is free and needs no API keys.
 - Never commit secrets (`.env`) or user data (`data/`, `logs/sessions/`).
 - Models, prices, prompts and thresholds live in `config/*.yaml`, not in code.

@@ -50,5 +50,5 @@ reported in the page and in the server output with the file and the reason.
 ```
 
 ```bash
-python3 scripts/smoke_test.py <preset-name>
+./target/release/voice-agent --smoke <preset-name>
 ```
