@@ -93,6 +93,20 @@ class StoreTest(unittest.TestCase):
             store.save_profile({"instructions": "Call me Sam."})
             self.assertEqual(store.profile()["instructions"], "Call me Sam.")
 
+    def test_folders(self):
+        with tempfile.TemporaryDirectory() as d:
+            store = Store(Path(d) / "conversations")
+            conv = store.create("general")
+            store.save(conv)
+            work, fun = store.create_folder("Work"), store.create_folder("Fun")
+            self.assertTrue(store.move_conversation(conv["id"], work))
+            self.assertFalse(store.move_conversation(conv["id"], "0" * 12))  # no such folder
+            self.assertEqual(store.summaries()[0]["folder"], work)
+            store.reorder_folders([fun, work])
+            self.assertEqual([f["name"] for f in store.folders()], ["Fun", "Work"])
+            self.assertTrue(store.delete_folder(work))
+            self.assertIsNone(store.summaries()[0]["folder"])  # the conversation is kept, unfiled
+
     def test_rejects_path_tricks(self):
         with tempfile.TemporaryDirectory() as d:
             store = Store(Path(d))

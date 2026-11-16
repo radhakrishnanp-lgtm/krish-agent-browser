@@ -307,7 +307,7 @@ class Session:
     # ---------- conversations ----------
 
     def send_conversations(self) -> None:
-        self.send({"type": "conversations", "items": self.store.summaries()})
+        self.send({"type": "conversations", "items": self.store.summaries(), "folders": self.store.folders()})
 
     def send_conversation(self) -> None:
         c = self.conv
@@ -430,6 +430,35 @@ class Session:
             self.send_conversation()
         if self.store.delete(conv_id):
             self.emit_log("info", f"Deleted conversation {conv_id}")
+        self.send_conversations()
+
+    def folder_action(self, data: dict) -> None:
+        """create / rename / delete / reorder folders, and move a conversation into one."""
+        action = data.get("type")
+        name = " ".join(str(data.get("name") or "").split())[:60]
+        folder_id = data.get("folder") if action == "move" else data.get("id")
+        folder_id = folder_id if isinstance(folder_id, str) else None
+        try:
+            if action == "folder_create" and name:
+                self.store.create_folder(name)
+            elif action == "folder_rename" and name and folder_id:
+                self.store.rename_folder(folder_id, name)
+            elif action == "folder_delete" and folder_id:
+                self.store.delete_folder(folder_id)
+                if self.conv and self.conv.get("folder") == folder_id:
+                    self.conv["folder"] = None
+            elif action == "folder_order" and isinstance(data.get("ids"), list):
+                self.store.reorder_folders(data["ids"])
+            elif action == "move":
+                conv_id = str(data.get("id"))
+                if self.conv and self.conv["id"] == conv_id:
+                    # the open conversation is saved from memory later: change it there too
+                    if folder_id is None or any(f["id"] == folder_id for f in self.store.folders()):
+                        self.conv["folder"] = folder_id
+                if not self.store.move_conversation(conv_id, folder_id) and not (self.conv and self.conv["id"] == conv_id):
+                    self.emit_log("warn", "That conversation or folder no longer exists.")
+        except OSError as e:
+            self.emit_log("error", f"Could not save the folders: {e}")
         self.send_conversations()
 
     def rename_conversation(self, conv_id: str, title: str) -> None:

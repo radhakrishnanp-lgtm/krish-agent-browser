@@ -82,7 +82,7 @@ function setConn(cls, text) {
 function onMessage(m) {
   switch (m.type) {
     case 'hello': onHello(m); break;
-    case 'conversations': convs = m.items; renderConvList(); break;
+    case 'conversations': convs = m.items; folders = m.folders || []; renderConvList(); break;
     case 'conversation': showConversation(m.conversation); break;
     case 'conversation_meta':
       if (conv && conv.id === m.id) { conv.title = m.title; renderHeader(); }
@@ -209,28 +209,135 @@ function ago(iso) {
   return new Date(iso).toLocaleDateString();
 }
 
+// ---------- conversation list with folders ----------
+
+let folders = [];
+const collapsed = new Set(JSON.parse(store.get('voiceAgentCollapsed') || '[]'));
+const CONV_TYPE = 'application/x-voice-conv', FOLDER_TYPE = 'application/x-voice-folder';
+
+function convRow(c) {
+  const row = el('div', null, 'conv' + (conv && conv.id === c.id ? ' on' : ''));
+  row.tabIndex = 0;
+  row.setAttribute('role', 'button');
+  row.draggable = true;
+  row.ondragstart = (e) => { e.dataTransfer.setData(CONV_TYPE, c.id); e.dataTransfer.effectAllowed = 'move'; row.classList.add('dragging'); };
+  row.ondragend = () => row.classList.remove('dragging');
+  const open = () => { closeSide(); if (!conv || conv.id !== c.id) send({ type: 'open', id: c.id }); };
+  row.onclick = open;
+  row.onkeydown = (e) => { if (e.target === row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); open(); } };
+  const acts = el('span', null, 'acts');
+  const act = (glyph, title, fn) => {
+    const b = el('button', glyph); b.title = title; b.setAttribute('aria-label', `${title}: ${c.title}`);
+    b.onclick = (e) => { e.stopPropagation(); fn(); };
+    acts.append(b);
+  };
+  act('⇄', 'Move to folder', () => openMoveDialog(c));
+  act('✎', 'Rename', () => { const t = prompt('Rename conversation:', c.title); if (t && t.trim()) send({ type: 'rename', id: c.id, title: t }); });
+  act('✕', 'Delete', () => { if (confirm(`Delete "${c.title}"? This cannot be undone.`)) send({ type: 'delete', id: c.id }); });
+  row.append(el('span', c.title, 't'), acts, el('span', `${modeName(c.mode)} · ${ago(c.updated)} · ${c.turns} turn${c.turns === 1 ? '' : 's'}`, 's'));
+  return row;
+}
+
+// Makes an element accept dropped conversations (and, for folder headers, dropped folders).
+function dropTarget(node, folderId, acceptFolders) {
+  node.ondragover = (e) => {
+    const t = e.dataTransfer.types;
+    if (t.includes(CONV_TYPE) || (acceptFolders && t.includes(FOLDER_TYPE))) { e.preventDefault(); node.classList.add('drop'); }
+  };
+  node.ondragleave = () => node.classList.remove('drop');
+  node.ondrop = (e) => {
+    e.preventDefault();
+    node.classList.remove('drop');
+    const convId = e.dataTransfer.getData(CONV_TYPE), moved = e.dataTransfer.getData(FOLDER_TYPE);
+    if (convId) {
+      send({ type: 'move', id: convId, folder: folderId });
+      if (folderId) { collapsed.delete(folderId); saveCollapsed(); }
+    } else if (moved && acceptFolders && moved !== folderId) { // reorder: put the dragged folder before this one
+      const ids = folders.map((f) => f.id).filter((id) => id !== moved);
+      ids.splice(ids.indexOf(folderId), 0, moved);
+      send({ type: 'folder_order', ids });
+    }
+  };
+}
+
+function saveCollapsed() { store.set('voiceAgentCollapsed', JSON.stringify([...collapsed])); }
+
 function renderConvList() {
   const box = $('convList');
+  const scroll = box.scrollTop;
   box.innerHTML = '';
   const q = $('search').value.trim().toLowerCase();
-  const shown = q ? convs.filter((c) => c.title.toLowerCase().includes(q) || modeName(c.mode).toLowerCase().includes(q)) : convs;
-  if (!shown.length) { box.append(el('div', q ? 'No conversation matches.' : 'Nothing saved yet.', 'none')); return; }
-  for (const c of shown) {
-    const row = el('div', null, 'conv' + (conv && conv.id === c.id ? ' on' : ''));
-    row.tabIndex = 0;
-    row.setAttribute('role', 'button');
-    const open = () => { closeSide(); if (!conv || conv.id !== c.id) send({ type: 'open', id: c.id }); };
-    row.onclick = open;
-    row.onkeydown = (e) => { if (e.target === row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); open(); } };
-    const acts = el('span', null, 'acts');
-    const ren = el('button', '✎'); ren.title = 'Rename'; ren.setAttribute('aria-label', `Rename ${c.title}`);
-    ren.onclick = (e) => { e.stopPropagation(); const t = prompt('Rename conversation:', c.title); if (t && t.trim()) send({ type: 'rename', id: c.id, title: t }); };
-    const del = el('button', '✕'); del.title = 'Delete'; del.setAttribute('aria-label', `Delete ${c.title}`);
-    del.onclick = (e) => { e.stopPropagation(); if (confirm(`Delete "${c.title}"? This cannot be undone.`)) send({ type: 'delete', id: c.id }); };
-    acts.append(ren, del);
-    row.append(el('span', c.title, 't'), acts, el('span', `${modeName(c.mode)} · ${ago(c.updated)} · ${c.turns} turn${c.turns === 1 ? '' : 's'}`, 's'));
-    box.append(row);
+  if (q) { // searching: one flat list across all folders
+    const shown = convs.filter((c) => c.title.toLowerCase().includes(q) || modeName(c.mode).toLowerCase().includes(q));
+    if (!shown.length) box.append(el('div', 'No conversation matches.', 'none'));
+    for (const c of shown) box.append(convRow(c));
+    return;
   }
+  const known = new Set(folders.map((f) => f.id));
+  for (const f of folders) {
+    const items = convs.filter((c) => c.folder === f.id);
+    const isOpen = !collapsed.has(f.id);
+    const head = el('div', null, 'folder' + (isOpen ? ' open' : ''));
+    head.tabIndex = 0;
+    head.setAttribute('role', 'button');
+    head.setAttribute('aria-expanded', String(isOpen));
+    head.draggable = true;
+    head.ondragstart = (e) => { e.dataTransfer.setData(FOLDER_TYPE, f.id); e.dataTransfer.effectAllowed = 'move'; };
+    const toggle = () => { if (isOpen) collapsed.add(f.id); else collapsed.delete(f.id); saveCollapsed(); renderConvList(); };
+    head.onclick = toggle;
+    head.onkeydown = (e) => { if (e.target === head && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggle(); } };
+    const acts = el('span', null, 'acts');
+    const ren = el('button', '✎'); ren.title = 'Rename folder'; ren.setAttribute('aria-label', `Rename folder ${f.name}`);
+    ren.onclick = (e) => { e.stopPropagation(); const t = prompt('Rename folder:', f.name); if (t && t.trim()) send({ type: 'folder_rename', id: f.id, name: t }); };
+    const del = el('button', '✕'); del.title = 'Delete folder'; del.setAttribute('aria-label', `Delete folder ${f.name}`);
+    del.onclick = (e) => {
+      e.stopPropagation();
+      if (confirm(`Delete the folder "${f.name}"? Its ${items.length} conversation${items.length === 1 ? '' : 's'} will be kept and moved out of the folder.`)) send({ type: 'folder_delete', id: f.id });
+    };
+    acts.append(ren, del);
+    const title = el('span', null, 'ftitle');
+    title.append(el('span', f.name, 'fname'), el('span', String(items.length), 'count'));
+    head.append(el('span', isOpen ? '▾' : '▸', 'caret'), title, acts);
+    dropTarget(head, f.id, true);
+    box.append(head);
+    if (isOpen) {
+      const body = el('div', null, 'fbody');
+      if (!items.length) body.append(el('div', 'Empty. Drag a conversation here.', 'none'));
+      for (const c of items) body.append(convRow(c));
+      dropTarget(body, f.id, false);
+      box.append(body);
+    }
+  }
+  const loose = convs.filter((c) => !c.folder || !known.has(c.folder));
+  const rest = el('div', null, 'fbody loose');
+  if (folders.length) { rest.append(el('div', 'Not in a folder', 'side-label sub')); dropTarget(rest, null, false); }
+  if (!loose.length) rest.append(el('div', convs.length ? 'Drop a conversation here to take it out of its folder.' : 'Nothing saved yet.', 'none'));
+  for (const c of loose) rest.append(convRow(c));
+  box.append(rest);
+  box.scrollTop = scroll;
+}
+
+function openMoveDialog(c) {
+  const body = $('moveBody');
+  body.innerHTML = '';
+  $('moveTitle').textContent = `Move "${c.title}"`;
+  const choice = (label, folderId, current) => {
+    const b = el('button', label + (current ? '  (it is here now)' : ''), 'btn wide');
+    b.disabled = current;
+    b.onclick = () => { send({ type: 'move', id: c.id, folder: folderId }); if (folderId) { collapsed.delete(folderId); saveCollapsed(); } $('moveDlg').close(); };
+    body.append(b);
+  };
+  for (const f of folders) choice(f.name, f.id, c.folder === f.id);
+  choice('Not in a folder', null, !c.folder);
+  const nf = el('button', '+ New folder…', 'btn wide');
+  nf.onclick = () => { $('moveDlg').close(); newFolder(); };
+  body.append(nf);
+  $('moveDlg').showModal();
+}
+
+function newFolder() {
+  const name = prompt('Folder name:');
+  if (name && name.trim()) send({ type: 'folder_create', name });
 }
 
 function showConversation(c) {
@@ -694,7 +801,8 @@ $('textForm').onsubmit = (e) => {
 };
 $('newBtn').onclick = () => { closeSide(); stopPlayback(); send({ type: 'close' }); };
 $('stopBtn').onclick = () => { stopPlayback(); send({ type: 'stop' }); };
-$('menuBtn').onclick = openSide;
+$('menuBtn').onclick = () => { if (window.matchMedia('(min-width: 761px)').matches) setSideCollapsed(false); else openSide(); };
+$('newFolderBtn').onclick = newFolder;
 $('detailsBtn').onclick = () => ($('details').classList.contains('closed') ? openDetails() : closeDetails());
 $('costChip').onclick = () => openDetails('cost');
 $('detailsClose').onclick = closeDetails;
@@ -794,6 +902,65 @@ $('dlBtn').onclick = async () => {
   }
   download(`${hello.session_id}.json`, await r.blob());
 };
+
+// ---------- flexible layout: resizable and collapsible panels, collapsible sections ----------
+
+function resizer(handleId, cssVar, storeKey, min, max, fromRight) {
+  const handle = $(handleId), root = document.documentElement;
+  const apply = (w) => root.style.setProperty(cssVar, w + 'px');
+  const saved = parseInt(store.get(storeKey), 10);
+  if (saved) apply(Math.min(max, Math.max(min, saved)));
+  handle.onpointerdown = (e) => {
+    e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+    document.body.classList.add('resizing');
+    let width = 0;
+    handle.onpointermove = (ev) => {
+      width = Math.round(Math.min(max, Math.max(min, fromRight ? window.innerWidth - ev.clientX : ev.clientX)));
+      apply(width);
+    };
+    handle.onpointerup = () => {
+      handle.onpointermove = handle.onpointerup = null;
+      document.body.classList.remove('resizing');
+      if (width) store.set(storeKey, String(width));
+    };
+  };
+  handle.ondblclick = () => { root.style.removeProperty(cssVar); store.set(storeKey, null); };
+  handle.onkeydown = (e) => { // arrow keys resize too
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    const cur = parseInt(getComputedStyle(root).getPropertyValue(cssVar), 10) || (fromRight ? 360 : 270);
+    const delta = (e.key === 'ArrowRight' ? 16 : -16) * (fromRight ? -1 : 1);
+    const w = Math.min(max, Math.max(min, cur + delta));
+    apply(w); store.set(storeKey, String(w));
+  };
+}
+resizer('sideResizer', '--side-w', 'voiceAgentSideW', 200, 520, false);
+resizer('detailsResizer', '--details-w', 'voiceAgentDetailsW', 300, 720, true);
+
+function setSideCollapsed(on) {
+  document.querySelector('.app').classList.toggle('side-collapsed', on);
+  store.set('voiceAgentSideCollapsed', on ? '1' : null);
+}
+$('sideCollapse').onclick = () => setSideCollapsed(true);
+if (store.get('voiceAgentSideCollapsed')) setSideCollapsed(true);
+
+// Every heading in Cost and Settings becomes a section that opens and closes; the state is remembered.
+function makeSections(pane) {
+  const closed = new Set(JSON.parse(store.get('voiceAgentClosedSections') || '["Debug"]'));
+  for (const h of [...pane.querySelectorAll(':scope > h3')]) {
+    const d = document.createElement('details'), sum = document.createElement('summary');
+    const name = h.textContent.trim();
+    d.className = 'sec';
+    sum.textContent = name;
+    d.open = !closed.has(name);
+    h.replaceWith(d);
+    d.append(sum);
+    while (d.nextSibling && !(d.nextSibling.nodeType === 1 && (d.nextSibling.tagName === 'H3' || d.nextSibling.classList.contains('sec')))) d.append(d.nextSibling);
+    d.ontoggle = () => { if (d.open) closed.delete(name); else closed.add(name); store.set('voiceAgentClosedSections', JSON.stringify([...closed])); };
+  }
+}
+makeSections($('tab-settings'));
+makeSections($('tab-cost'));
 
 if (!wide()) $('details').classList.add('closed');
 // Rotating or shrinking the window must not leave the drawer covering the page.

@@ -239,6 +239,8 @@ async def _serve(ws: WebSocket) -> None:
                 await session.delete_conversation(str(data.get("id")))
             elif kind == "rename":
                 session.rename_conversation(str(data.get("id")), str(data.get("title", "")))
+            elif kind in ("folder_create", "folder_rename", "folder_delete", "folder_order", "move"):
+                session.folder_action(data)
             elif kind == "settings":
                 session.apply_settings(data)
             elif kind == "set_instructions":

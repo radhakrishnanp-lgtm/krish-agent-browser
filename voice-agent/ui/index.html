@@ -11,12 +11,13 @@
 <div class="app">
 
   <aside id="sidebar" class="sidebar" aria-label="Conversations">
-    <div class="brand">Voice Agent</div>
+    <div class="brand"><span>Voice Agent</span><button id="sideCollapse" class="btn icon ghost" title="Hide the sidebar" aria-label="Hide the sidebar">«</button></div>
     <button id="newBtn" class="btn primary wide">+ New conversation</button>
-    <div class="side-label">Your conversations</div>
+    <div class="side-label"><span>Your conversations</span><button id="newFolderBtn" class="btn small ghost" title="Create a folder">+ Folder</button></div>
     <input id="search" type="search" class="search" placeholder="Search…" aria-label="Search conversations">
     <nav id="convList" class="convlist"></nav>
     <div class="side-foot"><span id="connDot" class="dot off"></span><span id="connText">Connecting…</span></div>
+    <div id="sideResizer" class="resizer right" role="separator" aria-orientation="vertical" aria-label="Resize the sidebar" tabindex="0" title="Drag to resize. Double-click to reset."></div>
   </aside>
 
   <div class="center">
@@ -59,6 +60,7 @@
   </div>
 
   <aside id="details" class="details" aria-label="Details">
+    <div id="detailsResizer" class="resizer left" role="separator" aria-orientation="vertical" aria-label="Resize the details panel" tabindex="0" title="Drag to resize. Double-click to reset."></div>
     <div class="tabs" role="tablist">
       <button class="tab on" data-tab="cost" role="tab">Cost</button>
       <button class="tab" data-tab="logs" role="tab">Logs <span id="errBadge" class="errbadge" hidden></span></button>
@@ -98,7 +100,7 @@
     </div>
 
     <div id="tab-settings" class="tabpane" hidden>
-      <h3 class="first">Microphone</h3>
+      <h3>Microphone</h3>
       <label class="field">Microphone<select id="micDevice"><option value="">System default</option></select></label>
       <label class="field">Speaker<select id="spkDevice"><option value="">System default</option></select></label>
       <label class="field">Sensitivity
@@ -183,6 +185,11 @@
       </div>
       <div class="dlgfoot"><span class="spacer"></span><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary">Save</button></div>
     </form>
+  </dialog>
+
+  <dialog id="moveDlg" class="dlg small">
+    <div class="dlghead"><h2 id="moveTitle">Move</h2><button class="btn icon" data-close aria-label="Close">✕</button></div>
+    <div id="moveBody" class="dlgbody movelist"></div>
   </dialog>
 
   <dialog id="modelDlg" class="dlg">

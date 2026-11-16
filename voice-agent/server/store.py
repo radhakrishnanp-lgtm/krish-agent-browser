@@ -30,6 +30,7 @@ class Store:
         self.modes_path = directory.parent / "custom_modes.json"
         self.profile_path = directory.parent / "profile.json"
         self.models_path = directory.parent / "custom_models.json"
+        self.folders_path = directory.parent / "folders.json"
         self._audio_bytes = sum(f.stat().st_size for f in self.audio_dir.rglob("*.wav"))
 
     def _path(self, conv_id: str) -> Path | None:
@@ -147,6 +148,65 @@ class Store:
         self._write_modes(modes)
         return True
 
+    # ---------- folders ----------
+
+    def folders(self) -> list[dict]:
+        """Ordered list of {"id", "name"}."""
+        try:
+            data = json.loads(self.folders_path.read_text())
+            return [f for f in data if isinstance(f, dict) and ID_RE.match(str(f.get("id"))) and f.get("name")]
+        except (OSError, json.JSONDecodeError, TypeError):
+            return []
+
+    def _save_folders(self, folders: list[dict]) -> None:
+        self._write_json(self.folders_path, folders)
+
+    def create_folder(self, name: str) -> str:
+        folders = self.folders()
+        folder_id = uuid.uuid4().hex[:12]
+        folders.append({"id": folder_id, "name": name})
+        self._save_folders(folders)
+        return folder_id
+
+    def rename_folder(self, folder_id: str, name: str) -> bool:
+        folders = self.folders()
+        for f in folders:
+            if f["id"] == folder_id:
+                f["name"] = name
+                self._save_folders(folders)
+                return True
+        return False
+
+    def delete_folder(self, folder_id: str) -> bool:
+        """Removes the folder; its conversations are kept and become unfiled."""
+        folders = self.folders()
+        kept = [f for f in folders if f["id"] != folder_id]
+        if len(kept) == len(folders):
+            return False
+        for path in self.dir.glob("*.json"):
+            conv = self.load(path.stem)
+            if conv and conv.get("folder") == folder_id:
+                conv["folder"] = None
+                self._write_json(path, conv)  # keep its "updated" time
+        self._save_folders(kept)
+        return True
+
+    def reorder_folders(self, ids: list) -> None:
+        folders = {f["id"]: f for f in self.folders()}
+        ordered = [folders.pop(i) for i in ids if isinstance(i, str) and i in folders]
+        self._save_folders(ordered + list(folders.values()))
+
+    def move_conversation(self, conv_id: str, folder_id: str | None) -> bool:
+        if folder_id is not None and not any(f["id"] == folder_id for f in self.folders()):
+            return False
+        path = self._path(conv_id)
+        conv = self.load(conv_id)
+        if not path or not conv:
+            return False
+        conv["folder"] = folder_id
+        self._write_json(path, conv)  # moving is not an edit: keep "updated"
+        return True
+
     # ---------- models added in the UI (your own endpoints) ----------
 
     def custom_models(self) -> dict:
@@ -205,6 +265,7 @@ class Store:
             conv = self.load(path.stem)
             if conv:
                 out.append({"id": conv["id"], "title": conv.get("title", ""), "mode": conv.get("mode", ""),
+                            "folder": conv.get("folder") or None,
                             "updated": conv.get("updated", ""), "turns": conv.get("turns", 0),
                             "recorded": any(m.get("audio") for m in conv["messages"]),
                             "total": round(conv["totals"]["total"], 6)})
