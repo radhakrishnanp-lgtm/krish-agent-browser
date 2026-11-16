@@ -21,8 +21,29 @@ _client: httpx.AsyncClient | None = None
 def client() -> httpx.AsyncClient:
     global _client
     if _client is None:
-        _client = httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0))
+        # Long keep-alive: a reused TLS connection saves roughly 200-300 ms per call.
+        _client = httpx.AsyncClient(
+            timeout=httpx.Timeout(60.0, connect=10.0),
+            limits=httpx.Limits(max_keepalive_connections=10, keepalive_expiry=120.0),
+        )
     return _client
+
+
+_warmed: dict[str, float] = {}
+
+
+async def warm(base_urls: set[str], max_age: float = 60.0) -> None:
+    """Opens (or keeps open) a connection to each provider so the next real call is fast."""
+    import time
+    now = time.monotonic()
+    for url in base_urls:
+        if now - _warmed.get(url, -1e9) < max_age:
+            continue
+        _warmed[url] = now
+        try:
+            await client().head(url, timeout=5.0)
+        except httpx.HTTPError:
+            pass
 
 
 class ProviderError(Exception):
@@ -62,12 +83,13 @@ def pcm_to_wav(pcm: bytes, sample_rate: int) -> bytes:
     return buf.getvalue()
 
 
-async def transcribe(stage: Stage, pcm: bytes, sample_rate: int) -> dict:
+async def transcribe(stage: Stage, pcm: bytes, sample_rate: int, language: str | None = None) -> dict:
     """Returns {"text", "seconds", "api_cost", "raw"}."""
     seconds = len(pcm) / 2 / sample_rate
     data = {"model": stage.model}
-    if stage.options.get("language"):
-        data["language"] = stage.options["language"]
+    language = language or stage.options.get("language")
+    if language:
+        data["language"] = language
     try:
         r = await client().post(
             f"{stage.base_url}/audio/transcriptions",
@@ -131,13 +153,15 @@ async def chat_stream(stage: Stage, messages: list[dict]) -> AsyncIterator[dict]
     yield {"usage": usage, "raw": last}
 
 
-async def synthesize(stage: Stage, text: str) -> AsyncIterator[bytes]:
+async def synthesize(stage: Stage, text: str, voice: str | None = None, speed: float | None = None) -> AsyncIterator[bytes]:
     """Yields raw PCM (24 kHz mono s16le) as it arrives."""
     body = {"model": stage.model, "input": text, "response_format": "pcm"}
-    if stage.options.get("voice"):
-        body["voice"] = stage.options["voice"]
-    if stage.options.get("speed"):
-        body["speed"] = stage.options["speed"]
+    voice = voice or stage.options.get("voice")
+    speed = speed or stage.options.get("speed")
+    if voice:
+        body["voice"] = voice
+    if speed and abs(float(speed) - 1.0) > 0.01:
+        body["speed"] = float(speed)
     try:
         async with client().stream("POST", f"{stage.base_url}/audio/speech", headers=_headers(stage), json=body) as r:
             if r.status_code != 200:

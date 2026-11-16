@@ -11,7 +11,7 @@ COPY config ./config
 COPY server ./server
 COPY ui ./ui
 COPY scripts ./scripts
-RUN mkdir -p logs/sessions && useradd -m app && chown -R app /app
+RUN mkdir -p logs/sessions data/conversations && useradd -m app && chown -R app /app
 USER app
 
 EXPOSE 8080

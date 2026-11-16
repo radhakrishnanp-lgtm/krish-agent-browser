@@ -4,3 +4,5 @@ logs/sessions/*
 __pycache__/
 *.pyc
 .venv/
+data/conversations/*
+!data/conversations/.gitkeep

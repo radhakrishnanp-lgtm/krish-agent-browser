@@ -2,3 +2,4 @@
 .venv
 logs/sessions/*
 __pycache__
+data/conversations/*

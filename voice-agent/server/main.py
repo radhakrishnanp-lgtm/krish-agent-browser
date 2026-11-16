@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import ROOT, Config, ConfigError
 from .session import Session
+from .store import Store
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger("voice-agent")
@@ -33,6 +34,7 @@ if not ACCESS_TOKEN:
 
 SESSIONS_DIR = ROOT / (cfg.default.get("logging") or {}).get("sessions_dir", "logs/sessions")
 SESSION_ID = re.compile(r"^[0-9a-f-]{20,40}$")
+store = Store(ROOT / (cfg.default.get("storage") or {}).get("conversations_dir", "data/conversations"))
 
 app = FastAPI(title="Voice Agent")
 
@@ -78,7 +80,7 @@ async def ws_endpoint(ws: WebSocket, token: str | None = None):
     try:
         try:
             cfg.reload()  # YAML edits apply to every new session without a restart
-            session = Session(cfg, outbox)
+            session = Session(cfg, outbox, store)
         except ConfigError as e:
             outbox.put_nowait({"type": "log", "level": "error", "message": f"Config error: {e}"})
             outbox.put_nowait({"type": "error", "message": f"Config error: {e}"})
@@ -89,8 +91,10 @@ async def ws_endpoint(ws: WebSocket, token: str | None = None):
         session.emit_log("info", f"Session {session.session_id} started with preset '{session.preset}'", session.models())
         for key in cfg.missing_keys(session.preset):
             session.emit_log("error", f"{key} is not set on the server. Add it to voice-agent/.env and restart.")
+        session.send_conversations()
         session.emit_cost(None)
         session.send({"type": "status", "state": "listening"})
+        session.warm()
 
         while True:
             msg = await ws.receive()
@@ -103,14 +107,30 @@ async def ws_endpoint(ws: WebSocket, token: str | None = None):
                 data = json.loads(msg.get("text") or "{}")
             except json.JSONDecodeError:
                 continue
+            if not isinstance(data, dict):
+                continue
             kind = data.get("type")
             if kind == "text" and str(data.get("text", "")).strip():
+                session.warm()
                 session.start_turn(text=str(data["text"]).strip()[:2000])
+            elif kind == "new":
+                await session.new_conversation(data.get("mode"), greet=bool(data.get("greet", True)))
+            elif kind == "close":
+                await session.cancel_turn()
+                session.conv = None
+                session.send_conversation()
+                session.emit_cost(None)
+            elif kind == "open":
+                await session.open_conversation(str(data.get("id")))
+            elif kind == "delete":
+                await session.delete_conversation(str(data.get("id")))
+            elif kind == "rename":
+                session.rename_conversation(str(data.get("id")), str(data.get("title", "")))
+            elif kind == "settings":
+                session.set_voice_settings(data.get("voice"), data.get("speed"))
             elif kind == "set_preset":
                 await session.cancel_turn()
                 session.set_preset(str(data.get("name")))
-            elif kind == "clear":
-                await session.clear()
             elif kind == "raw":
                 session.show_raw = bool(data.get("enabled"))
                 session.emit_log("info", f"Raw API responses {'on' if session.show_raw else 'off'}")
@@ -121,9 +141,8 @@ async def ws_endpoint(ws: WebSocket, token: str | None = None):
         pass
     finally:
         if session:
-            await session.cancel_turn()
+            await session.close()
             if session.turns:
-                session.save()
                 log.info("Session %s ended: %d turn(s), total $%.6f, log %s",
                          session.session_id, len(session.turns), session.totals["total"], session.log_path)
         writer_task.cancel()

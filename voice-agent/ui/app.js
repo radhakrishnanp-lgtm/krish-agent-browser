@@ -1,141 +1,280 @@
-// Voice Agent UI. Talks to the server over one WebSocket:
+// Voice Agent UI. One WebSocket to the server:
 //   browser -> server: binary = 16 kHz mono Int16 PCM microphone audio; JSON = control messages
-//   server -> browser: binary = TTS audio (PCM, Int16, mono); JSON = status / transcript / cost / log
+//   server -> browser: binary = reply audio (PCM, Int16, mono); JSON = status / transcript / cost / log
 'use strict';
 
 const $ = (id) => document.getElementById(id);
 const money = (v) => (v == null ? '–' : '$' + Number(v).toFixed(6));
-const STATE_LABELS = {
-  idle: 'Idle', listening: 'Listening', user_speaking: 'Hearing you…', transcribing: 'Transcribing…',
-  thinking: 'Thinking…', speaking: 'Speaking',
+const secs = (ms) => (ms / 1000).toFixed(1) + ' s';
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { v == null || v === '' ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) { /* private mode */ } },
+};
+const STATES = {
+  idle: ['Not connected', ''],
+  listening: ['Listening', 'Just start talking.'],
+  user_speaking: ['Hearing you…', 'Pause when you are done.'],
+  transcribing: ['Transcribing…', ''],
+  thinking: ['Thinking…', ''],
+  speaking: ['Speaking', 'Talk over me to interrupt.'],
 };
 
-let ws = null;
-let hello = null;
-let serverState = 'idle';
+let ws = null, hello = null, conv = null, convs = [];
+let serverState = 'idle', connected = false, retries = 0, retryTimer = null;
 let micOn = false, micCtx = null, micStream = null, micLevel = 0;
 let playCtx = null, playHead = 0, playing = new Set(), acceptAudio = false, outRate = 24000, playLevel = 0;
-let logLines = 0;
+let errCount = 0, replyTimes = [];
 
 // ---------- connection ----------
 
 function connect() {
-  setConn(false, 'Connecting…');
-  const token = localStorage.getItem('voiceAgentToken') || '';
+  clearTimeout(retryTimer);
+  setConn('wait', retries ? 'Reconnecting…' : 'Connecting…');
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(token)}`);
+  ws = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(store.get('voiceAgentToken') || '')}`);
   ws.binaryType = 'arraybuffer';
-  ws.onopen = () => setConn(true, 'Connected');
+  ws.onopen = () => { connected = true; setConn('on', 'Connected'); hideBanner(); };
   ws.onmessage = (ev) => (typeof ev.data === 'string' ? onMessage(JSON.parse(ev.data)) : onAudio(ev.data));
-  ws.onerror = () => addLog({ level: 'error', message: 'WebSocket error: could not reach the server.' });
   ws.onclose = (ev) => {
+    const wasConnected = connected;
+    connected = false;
     stopPlayback();
     setState('idle');
     if (ev.code === 4401) {
-      setConn(false, 'Access token needed');
+      setConn('off', 'Access token needed');
       const t = prompt('This server needs an access token (ACCESS_TOKEN in its .env):');
-      if (t) { localStorage.setItem('voiceAgentToken', t.trim()); connect(); }
+      if (t) { store.set('voiceAgentToken', t.trim()); connect(); }
       return;
     }
-    setConn(false, 'Disconnected');
-    addLog({ level: 'error', message: `Connection closed (code ${ev.code}). A reconnect starts a new session.` });
-    showBanner(`Disconnected from the server${ev.reason ? ': ' + ev.reason : ''}.`, 'Reconnect', connect);
+    if (wasConnected) { retries = 0; addLog({ level: 'warn', message: `Connection lost (code ${ev.code}). Reconnecting…` }); }
+    if (retries < 6) {
+      setConn('wait', 'Reconnecting…');
+      retryTimer = setTimeout(connect, Math.min(8000, 500 * 2 ** retries++));
+    } else {
+      setConn('off', 'Disconnected');
+      showBanner('Cannot reach the server. Check that it is running.', 'Try again', () => { retries = 0; connect(); });
+    }
   };
 }
 
 function send(obj) {
   if (ws && ws.readyState === WebSocket.OPEN) { ws.send(JSON.stringify(obj)); return true; }
-  addLog({ level: 'error', message: 'Not connected: message not sent.' });
+  showBanner('Not connected to the server, so that was not sent.');
   return false;
 }
 
-function setConn(on, text) {
-  $('connDot').className = 'dot ' + (on ? 'on' : 'off');
+function setConn(cls, text) {
+  $('connDot').className = 'dot ' + cls;
   $('connText').textContent = text;
-  if (on) hideBanner();
 }
 
 // ---------- server messages ----------
 
 function onMessage(m) {
   switch (m.type) {
-    case 'hello':
-      hello = m; outRate = m.output_sample_rate;
-      $('mLlm').textContent = m.models.llm; $('mStt').textContent = m.models.stt; $('mTts').textContent = m.models.tts;
-      $('sid').textContent = m.session_id;
-      $('preset').innerHTML = '';
-      for (const p of m.presets) $('preset').add(new Option(p, p, false, p === m.preset));
+    case 'hello': onHello(m); break;
+    case 'conversations': convs = m.items; renderConvList(); break;
+    case 'conversation': showConversation(m.conversation); break;
+    case 'conversation_meta':
+      if (conv && conv.id === m.id) { conv.title = m.title; renderHeader(); }
       break;
     case 'status': setState(m.state); break;
-    case 'transcript': showMessage(m); break;
+    case 'transcript': onTranscript(m); break;
     case 'cost': showCost(m); break;
     case 'log': addLog(m); break;
     case 'raw': addLog({ level: 'raw', ts: m.ts, message: `Raw ${m.stage.toUpperCase()} response`, data: m.payload }); break;
-    case 'error': addBubble('error', '', m.message); break;
+    case 'error': addRow('error', null, m.message); break;
     case 'audio_start': acceptAudio = true; break;
     case 'interrupt': stopPlayback(); break;
   }
 }
 
-function setState(s) {
-  serverState = s;
-  renderState();
+function onHello(m) {
+  const first = !hello || hello.session_id !== m.session_id;
+  hello = m; outRate = m.output_sample_rate;
+  $('mLlm').textContent = m.models.llm; $('mStt').textContent = m.models.stt; $('mTts').textContent = m.models.tts;
+  $('sid').textContent = m.session_id;
+  fillSelect($('preset'), m.presets.map((p) => [p, p]), m.preset);
+  const savedVoice = store.get('voiceAgentVoice');
+  const voice = m.voices.includes(savedVoice) ? savedVoice : '';
+  fillSelect($('voice'), [['', `Default (${m.default_voice || 'model default'})`], ...m.voices.map((v) => [v, v])], voice);
+  $('speed').value = store.get('voiceAgentSpeed') || '';
+  sendSettings();
+  $('modeCards').innerHTML = '';
+  for (const mode of m.modes) {
+    const b = document.createElement('button');
+    b.className = 'modecard';
+    b.append(el('b', mode.name), el('span', mode.description));
+    b.onclick = () => { ensurePlayCtx(); send({ type: 'new', mode: mode.id }); };
+    $('modeCards').append(b);
+  }
+  if (first) { // new connection: go back to the conversation that was open
+    const last = conv ? conv.id : store.get('voiceAgentConv');
+    if (last) send({ type: 'open', id: last }); else showConversation(null);
+  }
 }
 
-function renderState() {
-  // Audio can still be playing after the server has finished the turn.
-  const s = playing.size && serverState === 'listening' ? 'speaking' : serverState;
-  $('orb').className = 'orb ' + s;
-  let label = STATE_LABELS[s] || s;
-  if (s === 'listening' && !micOn) label = 'Ready (microphone off)';
-  $('state').textContent = label;
+function fillSelect(sel, options, value) {
+  sel.innerHTML = '';
+  for (const [v, label] of options) sel.add(new Option(label, v, false, v === value));
+}
+
+function el(tag, text, cls) {
+  const e = document.createElement(tag);
+  if (text != null) e.textContent = text;
+  if (cls) e.className = cls;
+  return e;
+}
+
+function sendSettings() {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'settings', voice: $('voice').value || null, speed: $('speed').value || null }));
+}
+
+// ---------- conversations ----------
+
+const modeName = (id) => (hello?.modes.find((m) => m.id === id) || {}).name || id;
+
+function ago(iso) {
+  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (!isFinite(s)) return '';
+  if (s < 60) return 'just now';
+  if (s < 3600) return Math.floor(s / 60) + ' min ago';
+  if (s < 86400) return Math.floor(s / 3600) + ' h ago';
+  if (s < 86400 * 7) return Math.floor(s / 86400) + ' d ago';
+  return new Date(iso).toLocaleDateString();
+}
+
+function renderConvList() {
+  const box = $('convList');
+  box.innerHTML = '';
+  if (!convs.length) { box.append(el('div', 'Nothing saved yet.', 'none')); return; }
+  for (const c of convs) {
+    const row = el('div', null, 'conv' + (conv && conv.id === c.id ? ' on' : ''));
+    row.tabIndex = 0;
+    row.setAttribute('role', 'button');
+    const open = () => { closeSide(); if (!conv || conv.id !== c.id) send({ type: 'open', id: c.id }); };
+    row.onclick = open;
+    row.onkeydown = (e) => { if (e.target === row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); open(); } };
+    const acts = el('span', null, 'acts');
+    const ren = el('button', '✎'); ren.title = 'Rename'; ren.setAttribute('aria-label', `Rename ${c.title}`);
+    ren.onclick = (e) => { e.stopPropagation(); const t = prompt('Rename conversation:', c.title); if (t && t.trim()) send({ type: 'rename', id: c.id, title: t }); };
+    const del = el('button', '✕'); del.title = 'Delete'; del.setAttribute('aria-label', `Delete ${c.title}`);
+    del.onclick = (e) => { e.stopPropagation(); if (confirm(`Delete "${c.title}"? This cannot be undone.`)) send({ type: 'delete', id: c.id }); };
+    acts.append(ren, del);
+    row.append(el('span', c.title, 't'), acts, el('span', `${modeName(c.mode)} · ${ago(c.updated)} · ${c.turns} turn${c.turns === 1 ? '' : 's'}`, 's'));
+    box.append(row);
+  }
+}
+
+function showConversation(c) {
+  stopPlayback();
+  conv = c;
+  store.set('voiceAgentConv', c ? c.id : null);
+  $('welcome').hidden = !!c;
+  $('transcript').hidden = !c;
+  $('transcript').innerHTML = '';
+  if (c) {
+    for (const m of c.messages) addRow(m.role, null, m.content, m);
+    showConvCost(c.totals);
+    if (!c.messages.length) $('transcript').append(el('div', 'Say something, or type below.', 'daybreak'));
+  } else {
+    showConvCost(null);
+  }
+  renderHeader();
+  renderConvList();
+  scrollDown(true);
+}
+
+function renderHeader() {
+  $('convTitle').textContent = conv ? conv.title : 'Voice Agent';
+  $('modeBadge').hidden = !conv;
+  if (conv) $('modeBadge').textContent = modeName(conv.mode);
+  document.title = conv ? `${conv.title} · Voice Agent` : 'Voice Agent';
 }
 
 // ---------- transcript ----------
 
-function addBubble(role, id, text) {
+function scrollDown(force) {
   const box = $('transcript');
-  box.querySelector('.empty')?.remove();
-  let el = id && document.getElementById(id);
-  if (!el) {
-    el = document.createElement('div');
-    el.className = 'msg ' + role;
-    if (id) el.id = id;
-    const who = document.createElement('small');
-    who.textContent = role === 'user' ? 'You' : role === 'assistant' ? 'Assistant' : 'Error';
-    el.append(who, document.createElement('span'));
-    box.append(el);
-  }
-  el.lastChild.textContent = text;
-  box.scrollTop = box.scrollHeight;
-  return el;
+  if (force || box.scrollHeight - box.scrollTop - box.clientHeight < 160) box.scrollTop = box.scrollHeight;
 }
 
-function showMessage(m) {
-  if (!m.text) return;
-  const el = addBubble(m.role, `msg-${hello?.session_id}-${m.role}-${m.turn}`, m.text);
-  if (m.interrupted) el.firstChild.textContent = 'Assistant (interrupted)';
+// In English practice the tutor starts a correction with: You can say: "..."
+const FIX = /^\s*You (?:can|could) say:?\s*["“]([^"”]+)["”]\.?\s*/i;
+
+function fillBubble(bubble, role, text) {
+  bubble.textContent = '';
+  const m = role === 'assistant' && FIX.exec(text);
+  if (m) {
+    const fix = el('span', null, 'fix');
+    fix.append(el('small', 'Better way to say it'), document.createTextNode(m[1]));
+    bubble.append(fix, document.createTextNode(text.slice(m[0].length)));
+  } else {
+    bubble.textContent = text;
+  }
+}
+
+function addRow(role, id, text, info) {
+  const box = $('transcript');
+  box.querySelector('.daybreak')?.remove();
+  let row = id && document.getElementById(id);
+  if (!row) {
+    row = el('div', null, 'row ' + role);
+    if (id) row.id = id;
+    row.append(el('div', null, 'bubble'));
+    box.append(row);
+  }
+  fillBubble(row.firstChild, role, text);
+  if (info && role === 'assistant') {
+    const bits = [];
+    if (info.interrupted) bits.push('interrupted');
+    if (info.response_ms) bits.push(`replied in ${secs(info.response_ms)}`);
+    if (info.cost) bits.push(money(info.cost));
+    if (bits.length) {
+      let meta = row.querySelector('.meta');
+      if (!meta) { meta = el('div', null, 'meta'); row.append(meta); }
+      meta.textContent = bits.join(' · ');
+    }
+  }
+  scrollDown(role === 'user');
+  return row;
+}
+
+function onTranscript(m) {
+  if (!m.text || !conv) return;
+  addRow(m.role, `t-${hello.session_id}-${m.role}-${m.turn}`, m.text, m.final ? m : null);
+  if (m.final && m.role === 'assistant' && m.response_ms) {
+    replyTimes.push(m.response_ms);
+    const avg = replyTimes.reduce((a, b) => a + b, 0) / replyTimes.length;
+    $('latency').textContent = `Last reply started after ${secs(m.response_ms)}. Average over ${replyTimes.length}: ${secs(avg)}. ` +
+      'Measured from when you stop talking to the first sound.';
+  }
 }
 
 // ---------- cost ----------
 
+function showConvCost(t) {
+  $('costChip').textContent = money(t ? t.total : 0);
+  $('cLlm').textContent = money(t?.llm); $('cStt').textContent = money(t?.stt);
+  $('cTts').textContent = money(t?.tts); $('cTot').textContent = money(t?.total);
+}
+
 function showCost(m) {
-  const s = m.session, t = m.turn;
-  $('hdrCost').textContent = money(s.total);
-  $('sLlm').textContent = money(s.llm); $('sStt').textContent = money(s.stt);
-  $('sTts').textContent = money(s.tts); $('sTot').textContent = money(s.total);
+  const t = m.turn;
+  showConvCost(m.conversation);
+  $('sTot').textContent = money(m.session.total);
   if (t) {
     $('tLlm').textContent = money(t.llm_cost); $('tStt').textContent = money(t.stt_cost);
     $('tTts').textContent = money(t.tts_cost); $('tTot').textContent = money(t.turn_total);
-    $('usage').textContent = `Turn ${t.index}: ${t.llm_input_tokens} in / ${t.llm_output_tokens} out tokens, ` +
-      `${t.stt_seconds.toFixed(1)} s audio, ${t.tts_characters} TTS characters`;
+    $('usage').textContent = `Last turn: ${t.llm_input_tokens} in / ${t.llm_output_tokens} out tokens, ` +
+      `${t.stt_seconds.toFixed(1)} s of your audio, ${t.tts_characters} characters spoken.`;
   }
   if (m.budget_usd > 0) {
-    const used = Math.min(1, s.total / m.budget_usd);
+    const used = Math.min(1, m.session.total / m.budget_usd);
     $('budgetWrap').hidden = false;
     $('budgetBar').style.width = (used * 100).toFixed(1) + '%';
     $('budgetBar').className = used > 0.8 ? 'high' : '';
-    $('budgetText').textContent = `Budget: ${money(Math.max(0, m.budget_usd - s.total))} left of $${m.budget_usd.toFixed(2)}`;
+    $('budgetText').textContent = `Budget for this visit: ${money(Math.max(0, m.budget_usd - m.session.total))} left of $${m.budget_usd.toFixed(2)}.`;
   }
 }
 
@@ -143,36 +282,56 @@ function showCost(m) {
 
 function addLog(m) {
   const box = $('log');
-  const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 20;
-  const line = document.createElement('div');
-  line.className = 'line ' + m.level;
-  const ts = document.createElement('span'); ts.className = 'ts';
-  ts.textContent = new Date(m.ts || Date.now()).toLocaleTimeString([], { hour12: false }) + ' ';
-  const lvl = document.createElement('span'); lvl.className = 'lvl'; lvl.textContent = m.level.toUpperCase();
-  line.append(ts, lvl, document.createTextNode(' ' + m.message));
+  const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
+  const line = el('div', null, 'line ' + m.level);
+  line.append(el('span', new Date(m.ts || Date.now()).toLocaleTimeString([], { hour12: false }) + ' ', 'ts'),
+    el('span', m.level.toUpperCase(), 'lvl'), document.createTextNode(' ' + m.message));
   if (m.data !== undefined) {
-    const d = document.createElement('details'), sum = document.createElement('summary'), pre = document.createElement('pre');
-    sum.textContent = 'details';
-    pre.textContent = JSON.stringify(m.data, null, 2);
-    d.append(sum, pre); line.append(d);
+    const d = el('details');
+    d.append(el('summary', 'details'), el('pre', JSON.stringify(m.data, null, 2)));
+    line.append(d);
   }
   box.append(line);
   while (box.childElementCount > 1000) box.firstChild.remove();
-  $('logCount').textContent = `${++logLines} lines`;
   if (stick) box.scrollTop = box.scrollHeight;
-  if (m.level === 'error') showBanner(m.message);
+  if (m.level === 'error') {
+    showBanner(m.message, 'Open logs', () => openDetails('logs'));
+    if ($('tab-logs').hidden || $('details').classList.contains('closed')) {
+      $('errBadge').hidden = false;
+      $('errBadge').textContent = ++errCount;
+    }
+  }
 }
 
 function showBanner(text, actionLabel, action) {
   const b = $('banner');
   b.innerHTML = '';
-  const span = document.createElement('span'); span.textContent = text;
-  b.append(span);
-  if (action) { const a = document.createElement('button'); a.textContent = actionLabel; a.onclick = action; b.append(a); }
-  const x = document.createElement('button'); x.textContent = 'Dismiss'; x.onclick = hideBanner; b.append(x);
+  b.append(el('span', text));
+  if (action) { const a = el('button', actionLabel, 'btn small'); a.onclick = action; b.append(a); }
+  const x = el('button', 'Dismiss', 'btn small'); x.onclick = hideBanner; b.append(x);
   b.hidden = false;
 }
 function hideBanner() { $('banner').hidden = true; }
+
+// ---------- state ----------
+
+function setState(s) { serverState = s; renderState(); }
+
+function renderState() {
+  // Audio can still be playing after the server has finished the turn.
+  const s = playing.size && serverState === 'listening' ? 'speaking' : serverState;
+  let [label, hint] = STATES[s] || [s, ''];
+  if (s === 'listening' && !micOn) { label = 'Ready'; hint = 'Tap the round button to talk, or type below.'; }
+  if (s === 'speaking' && (!micOn || (hello && !hello.barge_in))) hint = '';
+  $('micBtn').className = 'mic ' + (s === 'listening' && !micOn ? '' : s);
+  $('micBtn').setAttribute('aria-label', micOn ? 'Stop microphone' : 'Start microphone');
+  $('icoMic').toggleAttribute('hidden', micOn);
+  $('icoStop').toggleAttribute('hidden', !micOn);
+  $('micBtn').title = micOn ? 'Stop microphone' : 'Start microphone';
+  $('state').textContent = label;
+  $('hint').textContent = hint;
+  $('stopBtn').hidden = !(s === 'speaking' || s === 'thinking');
+}
 
 // ---------- playback ----------
 
@@ -191,7 +350,7 @@ function onAudio(buf) {
   for (let i = 0; i < pcm.length; i++) { ch[i] = pcm[i] / 32768; const a = Math.abs(ch[i]); if (a > peak) peak = a; }
   const src = playCtx.createBufferSource();
   src.buffer = audio; src.connect(playCtx.destination);
-  playHead = Math.max(playHead, playCtx.currentTime + 0.05);
+  playHead = Math.max(playHead, playCtx.currentTime + 0.04);
   const startsIn = (playHead - playCtx.currentTime) * 1000;
   src.start(playHead);
   playHead += audio.duration;
@@ -212,7 +371,7 @@ function stopPlayback() {
 
 async function startMic() {
   if (!navigator.mediaDevices?.getUserMedia) {
-    showBanner('This browser cannot open the microphone here. Use https:// or http://localhost.');
+    showBanner('This browser cannot use the microphone on this address. Open the page over https:// or on http://localhost.');
     return;
   }
   try {
@@ -235,31 +394,45 @@ async function startMic() {
   } catch (e) {
     const why = e.name === 'NotAllowedError' ? 'permission was denied. Allow the microphone for this site and try again.'
       : e.name === 'NotFoundError' ? 'no microphone was found.' : e.message;
-    addLog({ level: 'error', message: `Microphone failed: ${why}` });
     stopMic();
+    addLog({ level: 'error', message: `Microphone failed: ${why}` });
   }
-  renderMic();
+  renderState();
 }
 
 function stopMic() {
   micStream?.getTracks().forEach((t) => t.stop());
   micCtx?.close();
   micStream = micCtx = null; micOn = false; micLevel = 0;
-  renderMic();
-}
-
-function renderMic() {
-  $('micBtn').textContent = micOn ? 'Stop microphone' : 'Start microphone';
-  $('micBtn').classList.toggle('on', micOn);
   renderState();
 }
 
 function animate() {
   const level = playing.size ? playLevel : micOn ? micLevel : 0;
-  $('orb').style.setProperty('--level', Math.min(1, level * 1.5).toFixed(3));
+  $('micBtn').style.setProperty('--level', Math.min(1, level * 1.5).toFixed(3));
   micLevel *= 0.85;
   requestAnimationFrame(animate);
 }
+
+// ---------- drawers ----------
+
+const wide = () => window.matchMedia('(min-width: 1101px)').matches;
+
+function openDetails(tab) {
+  $('details').classList.remove('closed');
+  if (tab) selectTab(tab);
+  if (!wide()) { $('scrim').hidden = false; $('scrim').classList.remove('for-side'); }
+  if (!$('tab-logs').hidden) clearErrBadge();
+}
+function closeDetails() { $('details').classList.add('closed'); $('scrim').hidden = true; }
+function selectTab(name) {
+  for (const t of document.querySelectorAll('.tab')) t.classList.toggle('on', t.dataset.tab === name);
+  for (const p of document.querySelectorAll('.tabpane')) p.hidden = p.id !== 'tab-' + name;
+  if (name === 'logs') { clearErrBadge(); $('log').scrollTop = $('log').scrollHeight; }
+}
+function clearErrBadge() { errCount = 0; $('errBadge').hidden = true; }
+function openSide() { $('sidebar').classList.add('open'); $('scrim').hidden = false; $('scrim').classList.add('for-side'); }
+function closeSide() { $('sidebar').classList.remove('open'); if ($('details').classList.contains('closed') || wide()) $('scrim').hidden = true; }
 
 // ---------- controls ----------
 
@@ -271,34 +444,51 @@ $('textForm').onsubmit = (e) => {
   ensurePlayCtx();
   if (send({ type: 'text', text })) $('textInput').value = '';
 };
-$('preset').onchange = (e) => send({ type: 'set_preset', name: e.target.value });
+$('newBtn').onclick = () => { closeSide(); stopPlayback(); send({ type: 'close' }); };
 $('stopBtn').onclick = () => { stopPlayback(); send({ type: 'stop' }); };
-$('clearBtn').onclick = () => {
-  stopPlayback();
-  if (send({ type: 'clear' })) $('transcript').innerHTML = '<p class="empty">Conversation cleared.</p>';
-};
+$('menuBtn').onclick = openSide;
+$('detailsBtn').onclick = () => ($('details').classList.contains('closed') ? openDetails() : closeDetails());
+$('costChip').onclick = () => openDetails('cost');
+$('detailsClose').onclick = closeDetails;
+$('scrim').onclick = () => { closeSide(); if (!wide()) closeDetails(); };
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeSide(); if (!wide()) closeDetails(); } });
+for (const t of document.querySelectorAll('.tab')) t.onclick = () => selectTab(t.dataset.tab);
+
+$('preset').onchange = (e) => send({ type: 'set_preset', name: e.target.value });
+$('voice').onchange = (e) => { store.set('voiceAgentVoice', e.target.value); sendSettings(); };
+$('speed').onchange = (e) => { store.set('voiceAgentSpeed', e.target.value); sendSettings(); };
 $('rawToggle').onchange = (e) => send({ type: 'raw', enabled: e.target.checked });
-$('dlBtn').onclick = async () => {
-  if (!hello) return;
-  const token = localStorage.getItem('voiceAgentToken') || '';
-  const r = await fetch(`/api/sessions/${hello.session_id}?token=${encodeURIComponent(token)}`).catch(() => null);
-  if (!r || !r.ok) {
-    addLog({ level: 'warn', message: r && r.status === 404 ? 'No session log yet: it is written after the first turn.' : 'Could not download the session log.' });
-    return;
-  }
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(await r.blob());
-  a.download = `${hello.session_id}.json`;
-  a.click();
-  URL.revokeObjectURL(a.href);
-};
-$('logToggle').onclick = () => {
-  const collapsed = $('log').classList.toggle('collapsed');
-  $('logToggle').textContent = (collapsed ? '▸' : '▾') + ' Logs';
-  $('logToggle').setAttribute('aria-expanded', String(!collapsed));
-};
 $('errOnly').onchange = (e) => $('log').classList.toggle('erronly', e.target.checked);
 $('logClear').onclick = () => { $('log').innerHTML = ''; };
 
+function download(name, blob) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+$('exportBtn').onclick = () => {
+  const rows = [...document.querySelectorAll('#transcript .row:not(.error)')];
+  if (!conv || !rows.length) { showBanner('There is no conversation to export yet.'); return; }
+  const lines = rows.map((r) => `${r.classList.contains('user') ? 'You' : 'Assistant'}: ${r.firstChild.innerText.replace(/\s*\n\s*/g, ' ')}`);
+  download(`${conv.title.replace(/[^\w -]+/g, '').trim() || 'conversation'}.txt`,
+    new Blob([`${conv.title} (${modeName(conv.mode)})\n\n${lines.join('\n\n')}\n`], { type: 'text/plain' }));
+};
+
+$('dlBtn').onclick = async () => {
+  if (!hello) return;
+  const r = await fetch(`/api/sessions/${hello.session_id}?token=${encodeURIComponent(store.get('voiceAgentToken') || '')}`).catch(() => null);
+  if (!r || !r.ok) {
+    showBanner(r && r.status === 404 ? 'No debug log yet: it is written after the first turn of this visit.' : 'Could not download the debug log.');
+    return;
+  }
+  download(`${hello.session_id}.json`, await r.blob());
+};
+
+if (!wide()) $('details').classList.add('closed');
+renderState();
 connect();
 animate();
+setInterval(renderConvList, 60000); // keep "5 min ago" fresh

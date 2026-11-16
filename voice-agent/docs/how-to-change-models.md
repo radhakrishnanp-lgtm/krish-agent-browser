@@ -5,10 +5,10 @@
 Change one line in `config/default.yaml`:
 
 ```yaml
-active_preset: low-cost
+active_preset: premium-voice
 ```
 
-or set `VOICE_AGENT_PRESET=low-cost` in the environment (this wins over the file).
+or set `VOICE_AGENT_PRESET=premium-voice` in the environment (this wins over the file).
 
 Config files are re-read whenever a browser session starts, so a page reload is enough; no
 restart is needed. The **Preset** dropdown in the status bar switches for the current session only.
@@ -33,7 +33,7 @@ Options per stage:
 |---|---|
 | `llm` | `max_tokens`, `temperature`, `extra` (merged into the request body as-is) |
 | `stt` | `language` (optional ISO code, e.g. `en`) |
-| `tts` | `voice`, `speed` |
+| `tts` | `voice` (default voice), `voices` (list offered in the UI voice picker), `speed` |
 
 The TTS model must support `response_format: pcm` (24 kHz, 16-bit, mono). If it does not, the
 log panel shows "expected PCM audio but got ...".
@@ -60,3 +60,9 @@ python3 scripts/smoke_test.py <preset-name>
 ```
 
 It calls TTS, STT and LLM once each and prints PASS or FAIL with the provider's error message.
+
+## Change how the assistant behaves
+
+Modes are in `config/modes.yaml`. Each has a `system_prompt`, an optional spoken `greeting`,
+an optional `tts_speed` (English practice speaks at 0.9x) and an optional `stt_language`.
+Copy a block to add a mode; it appears on the start screen after a page reload.

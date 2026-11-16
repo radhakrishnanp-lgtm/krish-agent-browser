@@ -6,17 +6,17 @@ server:
   port: 8080
 
 assistant:
-  system_prompt: >
-    You are a friendly voice assistant. Your replies are spoken aloud, so keep them
-    short and conversational: one to three sentences, no markdown, no lists, no emojis.
-  max_history_turns: 12       # older turns are dropped from the LLM context
+  max_history_turns: 20       # how many past exchanges the LLM sees; older ones stay saved
+                              # but are not sent. Behaviour per mode is in modes.yaml.
 
 vad:
   threshold: 0.5              # speech probability needed to start a turn
-  min_silence_ms: 700         # silence that ends a turn
+  min_silence_ms: 550         # silence that ends a turn. Lower is faster but cuts off slow speakers
   min_speech_ms: 250          # shorter bursts are ignored
   pre_roll_ms: 300            # audio kept from before speech was detected
   max_utterance_s: 30
+  early_stt_ms: 250           # start transcribing after this much silence, before the turn
+                              # officially ends. Saves ~300 ms. 0 disables.
   barge_in: true              # speaking while the assistant talks interrupts it
 
 cost:
@@ -24,3 +24,6 @@ cost:
 
 logging:
   sessions_dir: logs/sessions
+
+storage:
+  conversations_dir: data/conversations   # saved conversations (history you can resume)

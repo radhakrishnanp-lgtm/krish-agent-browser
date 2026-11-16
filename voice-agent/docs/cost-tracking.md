@@ -27,21 +27,29 @@ and the log line says `(tokens estimated)`.
 - An interrupted reply still costs: the tokens generated and the sentences already sent to TTS
   are counted.
 - Audio where no words were recognised still costs the STT call.
+- Early transcription (`vad.early_stt_ms`) starts STT during a short pause. If you carry on
+  talking, that call is thrown away but still billed; its cost is added to the turn's STT cost
+  and the log line says "for discarded early transcriptions". With the default STT model this
+  is about $0.00001 each.
+- The spoken greeting of a new conversation costs a TTS call.
 - `openai/whisper-1` bills whole seconds, rounded up.
 - OpenRouter's `deepseek/deepseek-v4.1-flash-1017` has peak and off-peak prices. `pricing.yaml`
   holds the peak rate, but the API-reported cost is used in practice.
 
 ## Where the numbers show up
 
-- **UI status bar:** session total, live.
-- **UI cost panel:** this turn and session, split by LLM / STT / TTS, plus remaining budget.
-- **UI log panel and terminal:** one line per call and a summary line per turn.
-- **`logs/sessions/<session_id>.json`:** rewritten after every turn. Download it from the UI
-  with "Download session log".
+- **Top bar:** total for the open conversation, across every visit.
+- **Under each reply:** that turn's cost and how fast the reply started.
+- **Details, Cost tab:** last turn and conversation, split by LLM / STT / TTS, the total since
+  the page was opened, and the remaining budget.
+- **Details, Logs tab and the terminal:** one line per call and a summary line per turn.
+- **`data/conversations/<id>.json`:** the conversation with its running totals.
+- **`logs/sessions/<session_id>.json`:** per-visit debug log, rewritten after every turn.
+  Download it from Details, Settings, "Download debug log".
 
 ## Budget
 
-`cost.session_budget_usd` in `config/default.yaml` caps one browser session. When the total
+`cost.session_budget_usd` in `config/default.yaml` caps one page visit (not one conversation). When the total
 reaches it, new turns are refused with a clear error. Set it to `0` to disable. It limits one
 session, not your account; use the provider dashboards for account-level limits.
 

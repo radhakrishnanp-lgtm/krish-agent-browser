@@ -7,76 +7,118 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header class="statusbar">
-  <div class="conn"><span id="connDot" class="dot off"></span><span id="connText">Connecting…</span></div>
-  <div class="chip"><label>LLM</label><span id="mLlm">–</span></div>
-  <div class="chip"><label>STT</label><span id="mStt">–</span></div>
-  <div class="chip"><label>TTS</label><span id="mTts">–</span></div>
-  <div class="chip"><label>Preset</label><select id="preset" title="Switch model preset"></select></div>
-  <div class="total"><label>Session cost</label><span id="hdrCost">$0.000000</span></div>
-</header>
+<div class="app">
 
-<div id="banner" class="banner" hidden></div>
+  <aside id="sidebar" class="sidebar" aria-label="Conversations">
+    <div class="brand">Voice Agent</div>
+    <button id="newBtn" class="btn primary wide">+ New conversation</button>
+    <div class="side-label">Your conversations</div>
+    <nav id="convList" class="convlist"></nav>
+    <div class="side-foot"><span id="connDot" class="dot off"></span><span id="connText">Connecting…</span></div>
+  </aside>
 
-<main>
-  <section class="conversation">
-    <div class="stage">
-      <div id="orb" class="orb idle"></div>
-      <div id="state" class="state">Idle</div>
-      <button id="micBtn" class="primary">Start microphone</button>
+  <div class="center">
+    <header class="topbar">
+      <button id="menuBtn" class="btn icon" aria-label="Show conversations">☰</button>
+      <div class="titlebox">
+        <h1 id="convTitle">Voice Agent</h1>
+        <span id="modeBadge" class="badge" hidden></span>
+      </div>
+      <button id="costChip" class="btn chip" title="Cost of this conversation. Click for details.">$0.000000</button>
+      <button id="detailsBtn" class="btn">Details</button>
+    </header>
+
+    <div id="banner" class="banner" hidden></div>
+
+    <section id="welcome" class="welcome">
+      <h2>What would you like to do?</h2>
+      <p class="muted">Pick a mode to start. Every conversation is saved, so you can come back and continue it.</p>
+      <div id="modeCards" class="modecards"></div>
+    </section>
+
+    <section id="transcript" class="transcript" aria-live="polite" hidden></section>
+
+    <footer class="dock">
+      <div class="voice">
+        <button id="micBtn" class="mic" aria-label="Start microphone"><span class="ring"></span><svg id="icoMic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3.5 3.5 0 0 0 3.5-3.5v-6a3.5 3.5 0 0 0-7 0v6A3.5 3.5 0 0 0 12 15zm6-3.5a1 1 0 0 0-2 0 4 4 0 0 1-8 0 1 1 0 0 0-2 0 6 6 0 0 0 5 5.9V20H9a1 1 0 0 0 0 2h6a1 1 0 0 0 0-2h-2v-2.6a6 6 0 0 0 5-5.9z"/></svg><svg id="icoStop" viewBox="0 0 24 24" aria-hidden="true" hidden><rect x="6.5" y="6.5" width="11" height="11" rx="2"/></svg></button>
+        <div class="voicetext">
+          <div id="state" class="state">Idle</div>
+          <div id="hint" class="muted">Tap the round button to talk.</div>
+        </div>
+        <button id="stopBtn" class="btn" hidden>Stop reply</button>
+      </div>
+      <form id="textForm" class="textform">
+        <input id="textInput" type="text" placeholder="Or type a message…" autocomplete="off" aria-label="Type a message">
+        <button type="submit" class="btn">Send</button>
+      </form>
+    </footer>
+  </div>
+
+  <aside id="details" class="details" aria-label="Details">
+    <div class="tabs" role="tablist">
+      <button class="tab on" data-tab="cost" role="tab">Cost</button>
+      <button class="tab" data-tab="logs" role="tab">Logs <span id="errBadge" class="errbadge" hidden></span></button>
+      <button class="tab" data-tab="settings" role="tab">Settings</button>
+      <button id="detailsClose" class="btn icon" aria-label="Close details">✕</button>
     </div>
-    <div id="transcript" class="transcript" aria-live="polite">
-      <p class="empty">Press “Start microphone” and speak, or type a message below.</p>
-    </div>
-    <form id="textForm" class="textform">
-      <input id="textInput" type="text" placeholder="Type instead of speaking…" autocomplete="off">
-      <button type="submit">Send</button>
-    </form>
-  </section>
 
-  <aside>
-    <section class="panel">
-      <h2>Cost</h2>
+    <div id="tab-cost" class="tabpane">
       <table class="cost">
-        <thead><tr><th></th><th>This turn</th><th>Session</th></tr></thead>
+        <thead><tr><th></th><th>Last turn</th><th>Conversation</th></tr></thead>
         <tbody>
-          <tr><td>LLM</td><td id="tLlm">–</td><td id="sLlm">–</td></tr>
-          <tr><td>STT</td><td id="tStt">–</td><td id="sStt">–</td></tr>
-          <tr><td>TTS</td><td id="tTts">–</td><td id="sTts">–</td></tr>
-          <tr class="sum"><td>Total</td><td id="tTot">–</td><td id="sTot">–</td></tr>
+          <tr><td>LLM</td><td id="tLlm">–</td><td id="cLlm">–</td></tr>
+          <tr><td>Speech to text</td><td id="tStt">–</td><td id="cStt">–</td></tr>
+          <tr><td>Text to speech</td><td id="tTts">–</td><td id="cTts">–</td></tr>
+          <tr class="sum"><td>Total</td><td id="tTot">–</td><td id="cTot">–</td></tr>
         </tbody>
       </table>
       <p id="usage" class="muted">No turns yet.</p>
+      <p class="muted">Since you opened this page: <b id="sTot">$0.000000</b></p>
       <div id="budgetWrap" hidden>
         <div class="bar"><div id="budgetBar"></div></div>
         <p id="budgetText" class="muted"></p>
       </div>
-    </section>
+      <h3>Speed</h3>
+      <p id="latency" class="muted">No replies yet.</p>
+    </div>
 
-    <section class="panel">
-      <h2>Debug</h2>
-      <div class="controls">
-        <button id="stopBtn">Stop reply</button>
-        <button id="clearBtn">Clear conversation</button>
-        <button id="dlBtn">Download session log</button>
-        <label class="toggle"><input id="rawToggle" type="checkbox"> Show raw API responses</label>
+    <div id="tab-logs" class="tabpane" hidden>
+      <div class="loghead">
+        <label class="toggle"><input id="errOnly" type="checkbox"> Problems only</label>
+        <span class="spacer"></span>
+        <button id="logClear" class="btn small">Clear</button>
       </div>
+      <div id="log" class="log"></div>
+    </div>
+
+    <div id="tab-settings" class="tabpane" hidden>
+      <label class="field">Voice<select id="voice"></select></label>
+      <label class="field">Speaking speed
+        <select id="speed">
+          <option value="">Mode default</option>
+          <option value="0.8">Slow (0.8x)</option>
+          <option value="0.9">A little slow (0.9x)</option>
+          <option value="1">Normal (1.0x)</option>
+          <option value="1.1">A little fast (1.1x)</option>
+          <option value="1.2">Fast (1.2x)</option>
+        </select>
+      </label>
+      <label class="field">Model preset<select id="preset"></select></label>
+      <dl class="models">
+        <dt>LLM</dt><dd id="mLlm">–</dd>
+        <dt>Speech to text</dt><dd id="mStt">–</dd>
+        <dt>Text to speech</dt><dd id="mTts">–</dd>
+      </dl>
+      <h3>Debug</h3>
+      <label class="toggle"><input id="rawToggle" type="checkbox"> Show raw API responses in Logs</label>
+      <button id="exportBtn" class="btn wide">Export this conversation (text)</button>
+      <button id="dlBtn" class="btn wide">Download debug log (JSON)</button>
       <p class="muted">Session <code id="sid">–</code></p>
-    </section>
+    </div>
   </aside>
-</main>
 
-<section class="logpanel">
-  <div class="loghead">
-    <button id="logToggle" aria-expanded="true">▾ Logs</button>
-    <span id="logCount" class="muted"></span>
-    <span class="spacer"></span>
-    <label class="toggle"><input id="errOnly" type="checkbox"> Errors and warnings only</label>
-    <button id="logClear">Clear</button>
-  </div>
-  <div id="log" class="log"></div>
-</section>
-
+  <div id="scrim" class="scrim" hidden></div>
+</div>
 <script src="app.js"></script>
 </body>
 </html>

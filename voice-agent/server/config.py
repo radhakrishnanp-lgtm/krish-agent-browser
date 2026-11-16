@@ -58,6 +58,16 @@ class Config:
         self.providers = _read("providers.yaml").get("providers", {})
         self.presets = _read("models.yaml").get("presets", {})
         self.pricing = _read("pricing.yaml")
+        modes_doc = _read("modes.yaml")
+        self.modes = modes_doc.get("modes", {})
+        if not self.modes:
+            raise ConfigError("config/modes.yaml defines no modes.")
+        for key, m in self.modes.items():
+            if not (m or {}).get("system_prompt"):
+                raise ConfigError(f"Mode '{key}' in config/modes.yaml has no system_prompt.")
+        self.default_mode = modes_doc.get("default_mode") or next(iter(self.modes))
+        if self.default_mode not in self.modes:
+            raise ConfigError(f"default_mode '{self.default_mode}' is not defined in config/modes.yaml.")
         if not self.presets:
             raise ConfigError("config/models.yaml defines no presets.")
         self.active_preset = os.environ.get("VOICE_AGENT_PRESET") or self.default.get("active_preset", "default")

@@ -1,19 +1,24 @@
 # Voice Agent
 
-A live voice conversation in the browser. All models run in the cloud; the server needs no GPU.
+Talk to an AI in your browser. All models run in the cloud; the server needs no GPU.
+
+- **Three modes:** English practice (gently corrects your mistakes), Jokes and fun, and Anything.
+  Add your own in `config/modes.yaml`.
+- **Saved conversations:** every conversation is stored on the server. Pick one from the
+  sidebar to resume it; the assistant remembers what was said.
+- **Built for speed:** replies are spoken sentence by sentence while the LLM is still writing.
+  See [docs/latency.md](docs/latency.md).
+- **Live cost, logs and reply time** for every turn.
 
 ```
-Browser UI (transcript, status bar, cost panel, log panel)
+Browser UI (conversations, transcript, cost, logs, settings)
         |  WebSocket (/ws)
 Server (FastAPI)
    VAD  Silero, ONNX, CPU      detects when you start and stop speaking
    STT  OpenRouter             speech -> text
    LLM  Isoquant               deepseek-v4.1-flash-1017-fast
-   TTS  OpenRouter             text -> speech, streamed back sentence by sentence
+   TTS  OpenRouter             text -> speech
 ```
-
-Every call's cost is tracked, shown live in the UI, printed in the terminal and saved to
-`logs/sessions/<session>.json`.
 
 ## Run it locally
 
@@ -25,8 +30,9 @@ python3 scripts/smoke_test.py    # one call to each of TTS, STT and LLM; prints 
 ./scripts/start-server.sh
 ```
 
-Open http://localhost:8080, press **Start microphone** and speak. You can also type in the box
-under the transcript, which is handy for testing without a microphone.
+Open http://localhost:8080, pick a mode, tap the round microphone button and speak. You can
+also type in the box at the bottom, which is handy for testing without a microphone.
+Talking while the assistant speaks interrupts it.
 
 The UI is served by the same server, so there is no separate UI start script.
 
@@ -52,15 +58,18 @@ Three things matter when it is on the internet:
 
 `GET /healthz` returns the active preset and any missing keys, for health checks.
 
-Session logs are written inside the container at `/app/logs/sessions`. Mount a volume there
-(the compose file does) if you want to keep them.
+Saved conversations live in `/app/data/conversations` and debug logs in `/app/logs/sessions`.
+The compose file mounts both as volumes; on other platforms attach a persistent disk to
+`/app/data`, or your conversation history is lost on every redeploy.
+
+There are no user accounts: everyone who has the access token shares the same conversation list.
 
 ## Change models
 
 Edit one line in `config/default.yaml`:
 
 ```yaml
-active_preset: low-cost
+active_preset: premium-voice
 ```
 
 Presets live in `config/models.yaml`. See [docs/how-to-change-models.md](docs/how-to-change-models.md).
@@ -69,15 +78,17 @@ Presets live in `config/models.yaml`. See [docs/how-to-change-models.md](docs/ho
 
 | Path | What it holds |
 |---|---|
-| `config/default.yaml` | Active preset, system prompt, VAD settings, session budget |
+| `config/default.yaml` | Active preset, VAD and speed settings, session budget |
+| `config/modes.yaml` | Conversation modes: prompt, greeting, speaking speed |
 | `config/models.yaml` | Presets: which LLM / STT / TTS model each one uses |
 | `config/providers.yaml` | Provider base URLs and which env var holds each key |
 | `config/pricing.yaml` | Cost rates |
-| `server/` | `main.py` (web server), `session.py` (turn pipeline + cost + log), `providers.py` (the three API calls), `vad.py`, `pricing.py`, `config.py` |
+| `server/` | `main.py` (web server), `session.py` (turn pipeline + cost + log), `store.py` (saved conversations), `providers.py` (the three API calls), `vad.py`, `pricing.py`, `config.py` |
 | `ui/` | The browser UI (plain HTML, CSS and JS, no build step) |
 | `scripts/` | `start-server.sh`, `smoke_test.py` |
-| `logs/sessions/` | One JSON file per conversation |
-| `docs/` | Model changes, cost tracking, checkpoints |
+| `data/conversations/` | Saved conversations, one JSON file each |
+| `logs/sessions/` | Debug log, one JSON file per page visit |
+| `docs/` | Model changes, modes, latency, cost tracking, checkpoints |
 
 ## Tests
 
@@ -95,4 +106,6 @@ python3 -m unittest discover tests
 | "HTTP 404 ... check the model name" | Model id in `models.yaml` does not exist at that provider |
 | Microphone button does nothing or errors | Page is not on HTTPS or localhost, or permission was denied |
 | The assistant interrupts itself | Speaker sound reaches the microphone; use headphones or set `vad.barge_in: false` |
+| It cuts me off before I finish | Raise `vad.min_silence_ms` in `default.yaml` (try 800) |
+| Replies feel slow | Open Details, Logs: each line shows how long STT, LLM and TTS took. See `docs/latency.md` |
 | "Session budget reached" | Raise `cost.session_budget_usd` in `default.yaml`, or reload for a new session |

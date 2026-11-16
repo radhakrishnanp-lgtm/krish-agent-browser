@@ -11,9 +11,21 @@ Status as of 2026-11-16. "Verified" means it was run and observed, with what was
 | 5 | UI shows live cost and clear logs; errors are visible | Verified | Headless browser run: cost panel, log panel, red error banner for a missing key |
 | 6 | Documented and easy to change | Done | This folder and the README |
 
+## Second round: conversations, modes, speed
+
+| Feature | Status | How it was checked |
+|---|---|---|
+| Saved conversations: list, resume, rename, delete | Verified | WebSocket test and headless browser; history survived a page reload |
+| The assistant remembers a resumed conversation | Verified | Asked it to repeat the first sentence after reconnecting |
+| Modes: English practice, Jokes and fun, Anything | Verified | English mode corrected "I go to market and buyed three apple" and the UI showed the correction block |
+| Early transcription, parallel TTS, warm connections | Verified | Log lines show "started early during the pause"; reply time 0.8 to 2.6 s |
+| Barge-in | Verified with recorded audio | Reply stopped and a new turn started |
+| Voice and speed settings, export, debug log download | Verified | Headless browser |
+| Auto-reconnect after a dropped connection | Not tested | |
+
 ## Not yet verified
 
-- **The Isoquant LLM call.** No Isoquant key was available, so the `default` and `low-cost`
+- **The Isoquant LLM call.** No Isoquant key was available, so the `default` and `premium-voice`
   presets have not been run end to end. The Isoquant endpoint was reached and answered
   "invalid API key", so the URL is right. Run `python3 scripts/smoke_test.py default` once the
   key is in `.env`.
@@ -27,4 +39,6 @@ Status as of 2026-11-16. "Verified" means it was run and observed, with what was
   models. A small purpose-built server gives the same pipeline with a much smaller install.
 - **TTS model.** OpenRouter has no `openai/gpt-4o-mini-tts-2025-12-15`. The default is
   `hexgrad/kokoro-82m` (voice `af_heart`).
+- **STT model.** The default is `openai/whisper-large-v3-turbo` instead of `openai/whisper-1`:
+  about three times faster and thirty times cheaper in testing.
 - **No `start-ui.sh`.** The server serves the UI.

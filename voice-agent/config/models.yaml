@@ -3,25 +3,9 @@
 # should have a rate in pricing.yaml.
 #
 # llm.extra is merged into the chat-completions request body as-is.
+# tts.voices is the list offered in the UI voice picker.
 presets:
   default:
-    llm:
-      provider: isoquant
-      model: deepseek-v4.1-flash-1017-fast
-      max_tokens: 400
-      extra:
-        reasoning_effort: none
-        include_reasoning: false
-    stt:
-      provider: openrouter
-      model: openai/whisper-1
-    tts:
-      provider: openrouter
-      model: hexgrad/kokoro-82m
-      voice: af_heart
-
-  # Same LLM, cheaper and faster speech-to-text.
-  low-cost:
     llm:
       provider: isoquant
       model: deepseek-v4.1-flash-1017-fast
@@ -36,6 +20,25 @@ presets:
       provider: openrouter
       model: hexgrad/kokoro-82m
       voice: af_heart
+      voices: [af_heart, af_bella, af_nova, af_sarah, am_adam, am_michael, am_puck, bf_emma, bf_alice, bm_george, bm_daniel]
+
+  # Same as default with a premium voice (about 25x the TTS price, slightly faster to start).
+  premium-voice:
+    llm:
+      provider: isoquant
+      model: deepseek-v4.1-flash-1017-fast
+      max_tokens: 400
+      extra:
+        reasoning_effort: none
+        include_reasoning: false
+    stt:
+      provider: openrouter
+      model: openai/whisper-large-v3-turbo
+    tts:
+      provider: openrouter
+      model: x-ai/grok-voice-tts-1.0
+      voice: eve
+      voices: [eve, ara, rex, sal, leo]
 
   # Everything through OpenRouter (works with only OPENROUTER_API_KEY set).
   openrouter-only:
@@ -53,3 +56,4 @@ presets:
       provider: openrouter
       model: hexgrad/kokoro-82m
       voice: af_heart
+      voices: [af_heart, af_bella, af_nova, af_sarah, am_adam, am_michael, am_puck, bf_emma, bf_alice, bm_george, bm_daniel]

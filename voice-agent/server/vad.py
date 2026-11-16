@@ -30,9 +30,11 @@ def _get_session() -> ort.InferenceSession:
 
 class TurnDetector:
     """Feed PCM bytes; get back events: ("speech_start",), ("speech_confirmed",) once it is
-    long enough to be real speech, then ("speech_end", pcm_bytes) or ("speech_cancel",)."""
+    long enough to be real speech, then ("speech_end", pcm_bytes) or ("speech_cancel",).
+    With pause_ms set, a ("speech_pause", pcm_so_far) fires after that much silence, followed
+    by either ("speech_resume",) if the speaker carries on, or the normal speech_end."""
 
-    def __init__(self, threshold=0.5, min_silence_ms=700, min_speech_ms=250, pre_roll_ms=300, max_utterance_s=30):
+    def __init__(self, threshold=0.5, min_silence_ms=550, min_speech_ms=250, pre_roll_ms=300, max_utterance_s=30, pause_ms=0):
         self.sess = _get_session()
         self.threshold = threshold
         self.neg_threshold = max(threshold - 0.15, 0.05)
@@ -40,6 +42,8 @@ class TurnDetector:
         self.silence_windows = max(1, int(min_silence_ms / win_ms))
         self.min_speech_windows = max(1, int(min_speech_ms / win_ms))
         self.max_windows = int(max_utterance_s * 1000 / win_ms)
+        # Optional early "pause" event, fired before the turn officially ends.
+        self.pause_windows = int(pause_ms / win_ms) if 0 < pause_ms < min_silence_ms else 0
         self.pre_roll = deque(maxlen=max(1, int(pre_roll_ms / win_ms)))
         self._buf = np.zeros(0, dtype=np.int16)
         self.reset()
@@ -51,6 +55,7 @@ class TurnDetector:
         self._speech: list[np.ndarray] = []
         self._speech_windows = 0
         self._silence = 0
+        self._paused = False
         self.pre_roll.clear()
 
     def _prob(self, window: np.ndarray) -> float:
@@ -79,15 +84,23 @@ class TurnDetector:
             self._speech.append(window)
             if p >= self.neg_threshold:
                 self._speech_windows += 1
+                if self._paused:
+                    self._paused = False
+                    events.append(("speech_resume",))
                 self._silence = 0
                 if self._speech_windows == self.min_speech_windows:
                     events.append(("speech_confirmed",))
             else:
                 self._silence += 1
+                if (self._silence == self.pause_windows and self._speech_windows >= self.min_speech_windows
+                        and len(self._speech) < self.max_windows):
+                    self._paused = True
+                    events.append(("speech_pause", np.concatenate(self._speech).tobytes()))
             if self._silence >= self.silence_windows or len(self._speech) >= self.max_windows:
                 long_enough = self._speech_windows >= self.min_speech_windows
                 audio = np.concatenate(self._speech).tobytes()
                 self._speaking = False
+                self._paused = False
                 self._speech = []
                 self.pre_roll.clear()
                 events.append(("speech_end", audio) if long_enough else ("speech_cancel",))

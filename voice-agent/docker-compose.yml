@@ -5,6 +5,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./logs/sessions:/app/logs/sessions   # keep session logs across restarts
+      - ./data:/app/data                     # saved conversations
+      - ./logs/sessions:/app/logs/sessions   # debug logs
       - ./config:/app/config:ro              # edit YAML without rebuilding
     restart: unless-stopped

@@ -1,10 +1,13 @@
 """Run from the voice-agent folder:  python3 -m unittest discover tests"""
+import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
 
 from server import pricing
 from server.config import Config
+from server.store import Store
 from server.vad import TurnDetector
 
 
@@ -32,6 +35,34 @@ class ConfigTest(unittest.TestCase):
         for name in cfg.presets:
             for stage in cfg.resolve(name).values():
                 self.assertIsNotNone(cfg.rates(stage), f"{name}: no rate for {stage.provider}/{stage.model}")
+
+
+class StoreTest(unittest.TestCase):
+    def test_roundtrip_list_delete(self):
+        with tempfile.TemporaryDirectory() as d:
+            store = Store(Path(d))
+            conv = store.create("english")
+            conv["messages"].append({"role": "user", "content": "hello"})
+            conv["totals"]["total"] = 0.5
+            store.save(conv)
+            self.assertEqual(store.load(conv["id"])["messages"][0]["content"], "hello")
+            self.assertEqual([c["id"] for c in store.summaries()], [conv["id"]])
+            self.assertTrue(store.delete(conv["id"]))
+            self.assertIsNone(store.load(conv["id"]))
+
+    def test_rejects_path_tricks(self):
+        with tempfile.TemporaryDirectory() as d:
+            store = Store(Path(d))
+            self.assertIsNone(store.load("../../etc/passwd"))
+            self.assertFalse(store.delete("../x"))
+
+
+class ModesTest(unittest.TestCase):
+    def test_modes_have_prompts(self):
+        cfg = Config()
+        self.assertIn(cfg.default_mode, cfg.modes)
+        for m in cfg.modes.values():
+            self.assertTrue(m["system_prompt"].strip())
 
 
 class VadTest(unittest.TestCase):
