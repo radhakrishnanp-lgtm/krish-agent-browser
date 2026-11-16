@@ -73,6 +73,13 @@ class StoreTest(unittest.TestCase):
             self.assertTrue(store.delete_custom_mode(mode_id))
             self.assertFalse(store.delete_custom_mode("general"))
 
+    def test_profile_roundtrip(self):
+        with tempfile.TemporaryDirectory() as d:
+            store = Store(Path(d) / "conversations")
+            self.assertEqual(store.profile(), {})
+            store.save_profile({"instructions": "Call me Sam."})
+            self.assertEqual(store.profile()["instructions"], "Call me Sam.")
+
     def test_rejects_path_tricks(self):
         with tempfile.TemporaryDirectory() as d:
             store = Store(Path(d))
@@ -89,6 +96,13 @@ class ModesTest(unittest.TestCase):
 
 
 class VadTest(unittest.TestCase):
+    def test_threshold_and_pause_can_change(self):
+        vad = TurnDetector(pause_ms=250)
+        vad.set_threshold(0.8)
+        self.assertAlmostEqual(vad.neg_threshold, 0.65)
+        vad.set_min_silence(1500)
+        self.assertEqual(vad.silence_windows, 46)
+
     def test_silence_produces_no_turn(self):
         vad = TurnDetector()
         self.assertEqual(vad.feed(np.zeros(16000 * 2, dtype=np.int16).tobytes()), [])

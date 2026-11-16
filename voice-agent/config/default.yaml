@@ -4,6 +4,7 @@ active_preset: default
 server:
   host: 0.0.0.0
   port: 8080
+  max_connections: 20         # browser tabs connected at once; more are refused
 
 assistant:
   max_history_turns: 20       # how many past exchanges the LLM sees; older ones stay saved
@@ -26,6 +27,7 @@ logging:
   sessions_dir: logs/sessions
 
 recording:
+  max_total_mb: 2000          # stop saving audio once all recordings reach this size. 0 = no limit
   enabled: true               # save the audio of both sides so messages can be replayed.
                               # About 2 to 3 MB per minute of speech (WAV). Users can turn
                               # it off for themselves in Settings.

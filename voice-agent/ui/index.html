@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Voice Agent</title>
+<script src="theme.js"></script>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -25,6 +26,7 @@
         <h1 id="convTitle">Voice Agent</h1>
         <span id="modeBadge" class="badge" hidden></span>
       </div>
+      <button id="instrBtn" class="btn" title="Tell the assistant how to behave">Instructions</button>
       <button id="reviewBtn" class="btn accent" hidden title="Get a report on your English in this conversation">Feedback</button>
       <button id="costChip" class="btn chip" title="Cost of this conversation. Click for details.">$0.000000</button>
       <button id="detailsBtn" class="btn">Details</button>
@@ -96,6 +98,22 @@
     </div>
 
     <div id="tab-settings" class="tabpane" hidden>
+      <h3 class="first">Microphone</h3>
+      <label class="field">Microphone<select id="micDevice"><option value="">System default</option></select></label>
+      <label class="field">Speaker<select id="spkDevice"><option value="">System default</option></select></label>
+      <label class="field">Sensitivity
+        <select id="sensitivity">
+          <option value="0.3">High: picks up a quiet voice</option>
+          <option value="">Normal</option>
+          <option value="0.7">Low: ignores background noise</option>
+          <option value="0.85">Very low: only a clear, close voice</option>
+        </select>
+      </label>
+      <div class="meter" aria-hidden="true"><div id="meterBar"></div></div>
+      <button id="micTestBtn" class="btn wide">Test microphone</button>
+      <p id="micTestText" class="muted">Records 4 seconds and plays it back. Nothing is sent to the server.</p>
+
+      <h3>Voice</h3>
       <label class="field">Voice<select id="voice"></select></label>
       <label class="field">Speaking speed
         <select id="speed">
@@ -117,6 +135,14 @@
         </select>
       </label>
       <label class="toggle"><input id="recordToggle" type="checkbox" checked> Record audio so I can replay it</label>
+
+      <h3>Assistant</h3>
+      <button id="instrBtn2" class="btn wide">Custom instructions…</button>
+
+      <h3>Theme</h3>
+      <div id="themes" class="themes"></div>
+
+      <h3>Models</h3>
       <label class="field">Model preset<select id="preset"></select></label>
       <dl class="models">
         <dt>LLM</dt><dd id="mLlm">–</dd>
@@ -139,6 +165,24 @@
     <div class="dlghead"><h2>Your English feedback</h2><button class="btn icon" data-close aria-label="Close">✕</button></div>
     <div id="reviewBody" class="dlgbody"></div>
     <div class="dlgfoot"><span id="reviewMeta" class="muted"></span><span class="spacer"></span><button id="reviewAgain" class="btn primary">Update feedback</button></div>
+  </dialog>
+
+  <dialog id="instrDlg" class="dlg">
+    <form id="instrForm" method="dialog">
+      <div class="dlghead"><h2>Custom instructions</h2><button type="button" class="btn icon" data-close aria-label="Close">✕</button></div>
+      <div class="dlgbody">
+        <p class="muted lead">Tell the assistant about you and how it should answer. These are added to the mode's own behaviour and apply from your next message.</p>
+        <label class="field">For every conversation
+          <textarea id="instrGlobal" rows="5" maxlength="2000" placeholder="My name is Sam. I am a software engineer in Chennai. Use simple words and Indian examples. Always end with one question."></textarea>
+        </label>
+        <div class="count"><span id="instrGlobalCount">0</span> / 2000</div>
+        <label class="field"><span id="instrConvLabel">For this conversation only</span>
+          <textarea id="instrConv" rows="5" maxlength="2000" placeholder="Today we practise a job interview for a project manager role. Be strict and ask follow-up questions."></textarea>
+        </label>
+        <div class="count"><span id="instrConvCount">0</span> / 2000</div>
+      </div>
+      <div class="dlgfoot"><span class="spacer"></span><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary">Save</button></div>
+    </form>
   </dialog>
 
   <dialog id="modeDlg" class="dlg">

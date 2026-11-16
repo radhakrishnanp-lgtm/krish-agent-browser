@@ -12,6 +12,11 @@ Talk to an AI in your browser. All models run in the cloud; the server needs no 
   with corrections, an estimated level and what to practise next.
 - **Your own modes:** describe how the assistant should behave ("job interviewer", "storyteller")
   and start talking.
+- **Custom instructions:** tell the assistant about you and how to answer, for every
+  conversation or just the open one.
+- **Microphone tools:** choose the microphone and speaker, set sensitivity, and run a 4-second
+  test that plays your voice back.
+- **Themes:** System, Light, Dark, Midnight, Forest, Sunset and Rose.
 - **Built for speed:** replies are spoken sentence by sentence while the LLM is still writing.
   See [docs/latency.md](docs/latency.md).
 - **Live cost, logs and reply time** for every turn.
@@ -58,7 +63,8 @@ Three things matter when it is on the internet:
    platform such as Render, Railway or Fly.io that does it for you). The proxy must allow
    WebSockets on `/ws`.
 2. **Set `ACCESS_TOKEN`.** Without it, anyone with the URL can spend your API credits. With it
-   set, the UI asks for the token once and remembers it in that browser.
+   set, the UI asks for the token once and keeps you signed in with a cookie for 90 days.
+   See [docs/security.md](docs/security.md) before going live.
 3. **Set the keys as environment variables** on the platform (`ISOQUANT_API_KEY`,
    `OPENROUTER_API_KEY`). Never bake `.env` into the image; `.dockerignore` already excludes it.
 
@@ -100,8 +106,9 @@ Presets live in `config/models.yaml`. See [docs/how-to-change-models.md](docs/ho
 | `data/conversations/` | Saved conversations, one JSON file each |
 | `data/audio/` | Recordings, one folder per conversation |
 | `data/custom_modes.json` | Modes created in the UI |
+| `data/profile.json` | Your instructions for every conversation |
 | `logs/sessions/` | Debug log, one JSON file per page visit |
-| `docs/` | Model changes, modes, latency, cost tracking, checkpoints |
+| `docs/` | Model changes, modes, latency, cost tracking, security, checkpoints |
 
 ## Tests
 
@@ -118,6 +125,8 @@ python3 -m unittest discover tests
 | "HTTP 402 ... out of credits" | Top up the provider account |
 | "HTTP 404 ... check the model name" | Model id in `models.yaml` does not exist at that provider |
 | Microphone button does nothing or errors | Page is not on HTTPS or localhost, or permission was denied |
+| It does not hear me, or reacts to background noise | Details, Settings: run "Test microphone", pick the right microphone, change Sensitivity |
+| "Connected" never appears behind a proxy | Set `ALLOWED_ORIGINS` to your public host name |
 | The assistant interrupts itself | Speaker sound reaches the microphone; use headphones or set `vad.barge_in: false` |
 | It cuts me off before I finish | Raise `vad.min_silence_ms` in `default.yaml` (try 800) |
 | Replies feel slow | Open Details, Logs: each line shows how long STT, LLM and TTS took. See `docs/latency.md` |

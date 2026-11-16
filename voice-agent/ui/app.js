@@ -25,7 +25,7 @@ let micOn = false, micCtx = null, micStream = null, micLevel = 0;
 let playCtx = null, playHead = 0, playing = new Set(), acceptAudio = false, outRate = 24000, playLevel = 0;
 let errCount = 0, replyTimes = [];
 let replay = null, replayBtn = null;
-const tok = () => encodeURIComponent(store.get('voiceAgentToken') || '');
+let testing = null; // microphone test in progress: { chunks, peak }
 
 // ---------- connection ----------
 
@@ -33,7 +33,7 @@ function connect() {
   clearTimeout(retryTimer);
   setConn('wait', retries ? 'Reconnecting…' : 'Connecting…');
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(store.get('voiceAgentToken') || '')}`);
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
   ws.binaryType = 'arraybuffer';
   ws.onopen = () => { connected = true; setConn('on', 'Connected'); hideBanner(); };
   ws.onmessage = (ev) => (typeof ev.data === 'string' ? onMessage(JSON.parse(ev.data)) : onAudio(ev.data));
@@ -44,8 +44,7 @@ function connect() {
     setState('idle');
     if (ev.code === 4401) {
       setConn('off', 'Access token needed');
-      const t = prompt('This server needs an access token (ACCESS_TOKEN in its .env):');
-      if (t) { store.set('voiceAgentToken', t.trim()); connect(); }
+      login();
       return;
     }
     if (wasConnected) { retries = 0; addLog({ level: 'warn', message: `Connection lost (code ${ev.code}). Reconnecting…` }); }
@@ -57,6 +56,14 @@ function connect() {
       showBanner('Cannot reach the server. Check that it is running.', 'Try again', () => { retries = 0; connect(); });
     }
   };
+}
+
+// The token is exchanged for an HttpOnly cookie, so it is never kept in the page or put in a URL.
+async function login(wrong) {
+  const t = prompt(wrong ? 'That token was not accepted. Try again:' : 'This server needs an access token (ACCESS_TOKEN in its .env):');
+  if (!t) { showBanner('Sign in to use the voice agent.', 'Sign in', () => login()); return; }
+  const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: t.trim() }) }).catch(() => null);
+  if (r && r.ok) { hideBanner(); retries = 0; connect(); } else if (r && r.status === 401) login(true); else showBanner('Could not reach the server to sign in.', 'Try again', () => login());
 }
 
 function send(obj) {
@@ -89,6 +96,11 @@ function onMessage(m) {
     case 'audio_start': acceptAudio = true; break;
     case 'interrupt': stopPlayback(); break;
     case 'review': showReview(m); break;
+    case 'instructions':
+      hello.instructions = m.global;
+      if (conv) conv.instructions = m.conversation;
+      renderHeader();
+      break;
   }
 }
 
@@ -103,6 +115,7 @@ function onHello(m) {
   fillSelect($('voice'), [['', `Default (${m.default_voice || 'model default'})`], ...m.voices.map((v) => [v, v])], voice);
   $('speed').value = store.get('voiceAgentSpeed') || '';
   $('pause').value = store.get('voiceAgentPause') || '';
+  $('sensitivity').value = store.get('voiceAgentSensitivity') || '';
   $('recordToggle').disabled = !m.recording_allowed;
   $('recordToggle').checked = m.recording_allowed && store.get('voiceAgentRecord') !== 'off';
   sendSettings();
@@ -147,7 +160,7 @@ function el(tag, text, cls) {
 function sendSettings() {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'settings', voice: $('voice').value || null, speed: $('speed').value || null,
-      pause_ms: $('pause').value || null, record: $('recordToggle').checked }));
+      pause_ms: $('pause').value || null, sensitivity: $('sensitivity').value || null, record: $('recordToggle').checked }));
   }
 }
 
@@ -215,6 +228,7 @@ function renderHeader() {
   $('modeBadge').hidden = !conv;
   if (conv) $('modeBadge').textContent = modeName(conv.mode);
   $('reviewBtn').hidden = !(conv && hello?.modes.find((m) => m.id === conv.mode)?.review);
+  $('instrBtn').classList.toggle('set', !!(hello?.instructions || conv?.instructions));
   document.title = conv ? `${conv.title} · Voice Agent` : 'Voice Agent';
 }
 
@@ -281,7 +295,8 @@ function playButton(name, role) {
     if (mine) return;
     stopPlayback();
     send({ type: 'stop' });
-    replay = new Audio(`/api/audio/${conv.id}/${name}?token=${tok()}`);
+    replay = new Audio(`/api/audio/${conv.id}/${name}`);
+    if (replay.setSinkId && $('spkDevice').value) replay.setSinkId($('spkDevice').value).catch(() => {});
     replayBtn = b;
     b.textContent = '■ Stop'; b.classList.add('on');
     replay.onended = stopReplay;
@@ -432,8 +447,13 @@ function renderState() {
 // ---------- playback ----------
 
 function ensurePlayCtx() {
-  if (!playCtx) playCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (!playCtx) { playCtx = new (window.AudioContext || window.webkitAudioContext)(); applySpeaker(); }
   if (playCtx.state === 'suspended') playCtx.resume();
+}
+
+function applySpeaker() {
+  const id = $('spkDevice').value;
+  if (playCtx && playCtx.setSinkId) playCtx.setSinkId(id).catch(() => addLog({ level: 'warn', message: 'Could not switch to that speaker; using the default.' }));
 }
 
 function onAudio(buf) {
@@ -473,14 +493,25 @@ async function startMic() {
   }
   try {
     ensurePlayCtx();
-    micStream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-    });
+    const base = { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+    const wanted = store.get('voiceAgentMic');
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: wanted ? { ...base, deviceId: { exact: wanted } } : base });
+    } catch (e) {
+      if (!wanted || (e.name !== 'OverconstrainedError' && e.name !== 'NotFoundError')) throw e;
+      store.set('voiceAgentMic', null); // the saved microphone is unplugged: fall back to the default
+      addLog({ level: 'warn', message: 'Your chosen microphone is not connected; using the default one.' });
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: base });
+    }
     micCtx = new (window.AudioContext || window.webkitAudioContext)();
     await micCtx.audioWorklet.addModule('mic-worklet.js');
     const node = new AudioWorkletNode(micCtx, 'mic-processor');
     node.port.onmessage = (ev) => {
       micLevel = ev.data.peak;
+      if (testing) { // microphone test: keep the audio here, send nothing
+        if (testing.chunks) { testing.chunks.push(new Int16Array(ev.data.pcm)); testing.peak = Math.max(testing.peak, ev.data.peak); }
+        return;
+      }
       // With barge-in off, do not send the assistant's own voice back to the server.
       if (hello && !hello.barge_in && playing.size) return;
       if (replay) return; // a replayed recording must not be heard as a new turn
@@ -488,7 +519,10 @@ async function startMic() {
     };
     micCtx.createMediaStreamSource(micStream).connect(node);
     micOn = true;
-    addLog({ level: 'info', message: `Microphone on (${micCtx.sampleRate} Hz, sent as 16000 Hz)` });
+    const label = micStream.getAudioTracks()[0]?.label || 'default';
+    addLog({ level: 'info', message: `Microphone on: ${label} (${micCtx.sampleRate} Hz, sent as 16000 Hz)` });
+    micStream.getAudioTracks()[0].onended = () => { stopMic(); showBanner('The microphone was disconnected.'); };
+    refreshDevices();
   } catch (e) {
     const why = e.name === 'NotAllowedError' ? 'permission was denied. Allow the microphone for this site and try again.'
       : e.name === 'NotFoundError' ? 'no microphone was found.' : e.message;
@@ -505,8 +539,87 @@ function stopMic() {
   renderState();
 }
 
+// ---------- devices and microphone test ----------
+
+async function refreshDevices() {
+  if (!navigator.mediaDevices?.enumerateDevices) return;
+  const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+  const fill = (sel, kind, saved, word) => {
+    const list = devices.filter((d) => d.kind === kind && d.deviceId && d.deviceId !== 'default' && d.deviceId !== 'communications');
+    const opts = [['', 'System default'], ...list.map((d, i) => [d.deviceId, d.label || `${word} ${i + 1}`])];
+    fillSelect(sel, opts, list.some((d) => d.deviceId === saved) ? saved : '');
+  };
+  fill($('micDevice'), 'audioinput', store.get('voiceAgentMic') || '', 'Microphone');
+  fill($('spkDevice'), 'audiooutput', store.get('voiceAgentSpk') || '', 'Speaker');
+  $('spkDevice').disabled = !(window.AudioContext && AudioContext.prototype.setSinkId);
+  if (playCtx && $('spkDevice').value) applySpeaker();
+  if ($('spkDevice').disabled) $('spkDevice').title = 'This browser cannot choose a speaker; change it in your system settings.';
+}
+
+async function testMic() {
+  if (testing) return;
+  const startedHere = !micOn;
+  stopPlayback(); stopReplay(); send({ type: 'stop' });
+  testing = { chunks: null, peak: 0 };  // set before the mic starts so nothing reaches the server
+  $('micTestBtn').disabled = true;
+  if (!micOn) await startMic();
+  if (!micOn) { testing = null; $('micTestBtn').disabled = false; $('micTestText').textContent = 'The microphone could not be started. See the message at the top.'; return; }
+  testing.chunks = [];
+  for (let s = 4; s > 0; s--) { $('micTestText').textContent = `Speak now… ${s}`; await new Promise((r) => setTimeout(r, 1000)); }
+  const chunks = testing.chunks, peak = testing.peak;
+  testing.chunks = null; // stop collecting, but keep the server muted during playback
+  const n = chunks.reduce((a, c) => a + c.length, 0);
+  if (!n) { testing = null; $('micTestBtn').disabled = false; $('micTestText').textContent = 'No audio arrived from the microphone.'; if (startedHere) stopMic(); return; }
+  ensurePlayCtx();
+  const buf = playCtx.createBuffer(1, n, 16000), ch = buf.getChannelData(0);
+  let o = 0;
+  for (const c of chunks) for (let i = 0; i < c.length; i++) ch[o++] = c[i] / 32768;
+  const src = playCtx.createBufferSource();
+  src.buffer = buf; src.connect(playCtx.destination);
+  $('micTestText').textContent = 'Playing it back…';
+  src.onended = () => {
+    testing = null;
+    $('micTestBtn').disabled = false;
+    const pct = Math.round(peak * 100);
+    $('micTestText').textContent = peak < 0.02 ? `Almost silent (peak ${pct}%). Check the right microphone is chosen and not muted.`
+      : peak < 0.1 ? `Quiet (peak ${pct}%). Move closer, or set Sensitivity to High.`
+      : peak > 0.98 ? `Too loud (peak ${pct}%): it is distorting. Move back a little.`
+      : `Sounds good (peak ${pct}%).`;
+    if (startedHere) stopMic();
+  };
+  src.start();
+}
+
+const THEMES = [['system', 'System', 'linear-gradient(135deg,#f4f3ef 50%,#121514 50%)'], ['light', 'Light', '#f4f3ef'], ['dark', 'Dark', '#121514'],
+  ['midnight', 'Midnight', '#0b1020'], ['forest', 'Forest', '#16241c'], ['sunset', 'Sunset', '#c2410c'], ['rose', 'Rose', '#be185d']];
+
+function renderThemes() {
+  const current = store.get('voiceAgentTheme') || 'system';
+  $('themes').innerHTML = '';
+  for (const [id, name, colour] of THEMES) {
+    const b = el('button', null, 'swatch' + (id === current ? ' on' : ''));
+    const dot = el('i'); dot.style.background = colour;
+    b.append(dot, document.createTextNode(name));
+    b.setAttribute('aria-pressed', String(id === current));
+    b.onclick = () => { store.set('voiceAgentTheme', id); window.applyTheme(id); renderThemes(); };
+    $('themes').append(b);
+  }
+}
+
+function openInstructions() {
+  $('instrGlobal').value = hello?.instructions || '';
+  $('instrConv').value = conv?.instructions || '';
+  $('instrConv').disabled = !conv;
+  $('instrConvLabel').textContent = conv ? `For this conversation only (${conv.title})` : 'For this conversation only (open a conversation first)';
+  $('instrGlobalCount').textContent = $('instrGlobal').value.length;
+  $('instrConvCount').textContent = $('instrConv').value.length;
+  $('instrDlg').showModal();
+}
+
 function animate() {
   const level = playing.size ? playLevel : micOn ? micLevel : 0;
+  $('meterBar').style.width = (micOn ? Math.min(100, micLevel * 130) : 0).toFixed(0) + '%';
+  $('meterBar').classList.toggle('hot', micLevel > 0.9);
   $('micBtn').style.setProperty('--level', Math.min(1, level * 1.5).toFixed(3));
   micLevel *= 0.85;
   requestAnimationFrame(animate);
@@ -534,7 +647,12 @@ function closeSide() { $('sidebar').classList.remove('open'); if ($('details').c
 
 // ---------- controls ----------
 
-$('micBtn').onclick = () => (micOn ? stopMic() : startMic());
+let micBusy = false; // a second click while the microphone is still opening must not open it twice
+$('micBtn').onclick = async () => {
+  if (micBusy || testing) return;
+  micBusy = true;
+  try { if (micOn) stopMic(); else await startMic(); } finally { micBusy = false; }
+};
 $('textForm').onsubmit = (e) => {
   e.preventDefault();
   const text = $('textInput').value.trim();
@@ -558,6 +676,23 @@ $('speed').onchange = (e) => { store.set('voiceAgentSpeed', e.target.value); sen
 $('pause').onchange = (e) => { store.set('voiceAgentPause', e.target.value); sendSettings(); };
 $('recordToggle').onchange = (e) => { store.set('voiceAgentRecord', e.target.checked ? null : 'off'); sendSettings(); };
 $('search').oninput = renderConvList;
+$('sensitivity').onchange = (e) => { store.set('voiceAgentSensitivity', e.target.value); sendSettings(); };
+$('micDevice').onchange = async (e) => {
+  store.set('voiceAgentMic', e.target.value);
+  if (micOn) { stopMic(); await startMic(); } // restart on the new microphone
+};
+$('spkDevice').onchange = (e) => { store.set('voiceAgentSpk', e.target.value); applySpeaker(); };
+$('micTestBtn').onclick = testMic;
+navigator.mediaDevices?.addEventListener?.('devicechange', refreshDevices);
+$('instrBtn').onclick = openInstructions;
+$('instrBtn2').onclick = openInstructions;
+$('instrGlobal').oninput = (e) => { $('instrGlobalCount').textContent = e.target.value.length; };
+$('instrConv').oninput = (e) => { $('instrConvCount').textContent = e.target.value.length; };
+$('instrForm').onsubmit = () => {
+  const msg = { type: 'set_instructions', global: $('instrGlobal').value };
+  if (conv) msg.conversation = $('instrConv').value;
+  send(msg);
+};
 $('reviewBtn').onclick = () => {
   $('reviewDlg').showModal();
   if (conv?.review) showReview({ review: conv.review }); else send({ type: 'review' });
@@ -570,7 +705,7 @@ $('modeForm').onsubmit = () => {
 };
 $('audioBtn').onclick = async () => {
   if (!conv) { showBanner('Open a conversation first.'); return; }
-  const r = await fetch(`/api/conversations/${conv.id}/recording.wav?token=${tok()}`).catch(() => null);
+  const r = await fetch(`/api/conversations/${conv.id}/recording.wav`).catch(() => null);
   if (!r || !r.ok) { showBanner(r && r.status === 404 ? 'This conversation has no recorded audio yet.' : 'Could not download the recording.'); return; }
   download(`${conv.title.replace(/[^\w -]+/g, '').trim() || 'conversation'}.wav`, await r.blob());
 };
@@ -596,7 +731,7 @@ $('exportBtn').onclick = () => {
 
 $('dlBtn').onclick = async () => {
   if (!hello) return;
-  const r = await fetch(`/api/sessions/${hello.session_id}?token=${tok()}`).catch(() => null);
+  const r = await fetch(`/api/sessions/${hello.session_id}`).catch(() => null);
   if (!r || !r.ok) {
     showBanner(r && r.status === 404 ? 'No debug log yet: it is written after the first turn of this visit.' : 'Could not download the debug log.');
     return;
@@ -607,6 +742,8 @@ $('dlBtn').onclick = async () => {
 if (!wide()) $('details').classList.add('closed');
 // Rotating or shrinking the window must not leave the drawer covering the page.
 window.matchMedia('(min-width: 1101px)').addEventListener('change', (e) => { if (!e.matches) closeDetails(); else $('scrim').hidden = true; });
+renderThemes();
+refreshDevices();
 renderState();
 connect();
 animate();

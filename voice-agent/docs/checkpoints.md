@@ -21,7 +21,6 @@ Status as of 2026-11-16. "Verified" means it was run and observed, with what was
 | Early transcription, parallel TTS, warm connections | Verified | Log lines show "started early during the pause"; reply time 0.8 to 2.6 s |
 | Barge-in | Verified with recorded audio | Reply stopped and a new turn started |
 | Voice and speed settings, export, debug log download | Verified | Headless browser |
-| Auto-reconnect after a dropped connection | Not tested | |
 
 ## Third round: recordings and practice tools
 
@@ -33,6 +32,18 @@ Status as of 2026-11-16. "Verified" means it was run and observed, with what was
 | English feedback report | Verified | Five mistakes listed with corrections and a level, saved and shown again after reload |
 | Create and delete your own mode | Verified | A "Pirate captain" mode answered in character |
 | Pause-length setting, conversation search | Verified in the UI | Setting accepted; search filtered the list. The effect of pause length on real speech is untested |
+
+## Fourth round: microphone tools, themes, instructions, security
+
+| Feature | Status | How it was checked |
+|---|---|---|
+| Microphone test with playback | Verified with a simulated microphone | Reported "Sounds good (peak 84%)" and switched the microphone off again |
+| Choose microphone and speaker | Microphone verified with simulated devices; speaker choice not verified | A voice turn worked on the second simulated microphone. No real audio output exists in the test browser |
+| Sensitivity setting | Accepted and saved; a voice turn worked at Low | Its effect on real background noise is untested |
+| Themes | Verified | All seven applied and the choice survived a reload |
+| Custom instructions | Verified | The global instruction was followed in two conversations; the per-conversation one only in its own |
+| Sign-in cookie, origin check, headers, limits | Verified | See `docs/security.md` |
+| Auto-reconnect | Verified | Server stopped and restarted; the page reconnected to the same conversation and stayed signed in |
 
 ## Not yet verified
 

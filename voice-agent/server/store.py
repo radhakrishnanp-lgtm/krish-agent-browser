@@ -28,6 +28,8 @@ class Store:
         self.audio_dir = audio_dir or directory.parent / "audio"
         self.audio_dir.mkdir(parents=True, exist_ok=True)
         self.modes_path = directory.parent / "custom_modes.json"
+        self.profile_path = directory.parent / "profile.json"
+        self._audio_bytes = sum(f.stat().st_size for f in self.audio_dir.rglob("*.wav"))
 
     def _path(self, conv_id: str) -> Path | None:
         return self.dir / f"{conv_id}.json" if isinstance(conv_id, str) and ID_RE.match(conv_id) else None
@@ -62,7 +64,10 @@ class Store:
         path = self._path(conv_id)
         if path and path.exists():
             path.unlink()
-            shutil.rmtree(self.audio_dir / conv_id, ignore_errors=True)
+            folder = self.audio_dir / conv_id
+            if folder.exists():
+                self._audio_bytes -= sum(f.stat().st_size for f in folder.glob("*.wav"))
+                shutil.rmtree(folder, ignore_errors=True)
             return True
         return False
 
@@ -85,7 +90,11 @@ class Store:
             w.setsampwidth(2)
             w.setframerate(sample_rate)
             w.writeframes(pcm)
+        self._audio_bytes += len(pcm) + 44
         return name
+
+    def audio_mb(self) -> float:
+        return max(0, self._audio_bytes) / 1_000_000
 
     def full_recording(self, conv: dict) -> bytes | None:
         """The whole conversation as one WAV, in order, with a short gap between messages."""
@@ -136,6 +145,20 @@ class Store:
         del modes[mode_id]
         self._write_modes(modes)
         return True
+
+    # ---------- the owner's standing instructions ----------
+
+    def profile(self) -> dict:
+        try:
+            data = json.loads(self.profile_path.read_text())
+            return data if isinstance(data, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def save_profile(self, profile: dict) -> None:
+        tmp = self.profile_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(profile, indent=1, ensure_ascii=False))
+        tmp.replace(self.profile_path)
 
     def _write_modes(self, modes: dict) -> None:
         tmp = self.modes_path.with_suffix(".tmp")

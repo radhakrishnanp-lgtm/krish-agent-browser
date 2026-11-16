@@ -6,13 +6,41 @@
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --radius: 12px;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #121514; --surface: #1a1e1d; --surface2: #202524; --border: #303735; --text: #e7ebe9; --muted: #98a19d;
-    --accent: #2bb3a6; --accent-ink: #062a27; --accent-soft: #173734;
-    --ok: #4ac27f; --warn: #e0a440; --err: #ff7b6e; --err-soft: #3a1d1a;
-    --user: #1c6e67; --user-ink: #f2fbfa; --speak: #a78bfa; --fix: #1c3320; --fix-ink: #a9dfa3;
-  }
+[data-theme=light] { color-scheme: light; }
+[data-theme=dark] {
+  color-scheme: dark;
+  --bg: #121514; --surface: #1a1e1d; --surface2: #202524; --border: #303735; --text: #e7ebe9; --muted: #98a19d;
+  --accent: #2bb3a6; --accent-ink: #062a27; --accent-soft: #173734;
+  --ok: #4ac27f; --warn: #e0a440; --err: #ff7b6e; --err-soft: #3a1d1a;
+  --user: #1c6e67; --user-ink: #f2fbfa; --speak: #a78bfa; --fix: #1c3320; --fix-ink: #a9dfa3;
+}
+[data-theme=midnight] {
+  color-scheme: dark;
+  --bg: #0b1020; --surface: #121a30; --surface2: #0f1629; --border: #26314f; --text: #e6ebf7; --muted: #93a0bd;
+  --accent: #5ab0ff; --accent-ink: #06203a; --accent-soft: #17294a;
+  --ok: #4fd1a1; --warn: #f0b24a; --err: #ff7d8a; --err-soft: #3a1a26;
+  --user: #2457a6; --user-ink: #f3f7ff; --speak: #b392ff; --fix: #14332e; --fix-ink: #9fe3cf;
+}
+[data-theme=forest] {
+  color-scheme: dark;
+  --bg: #0f1a14; --surface: #16241c; --surface2: #132019; --border: #2a3d31; --text: #e4efe7; --muted: #94aa9b;
+  --accent: #7ccf6b; --accent-ink: #0f2a0b; --accent-soft: #1e3a22;
+  --ok: #7ccf6b; --warn: #e6b450; --err: #ff8a75; --err-soft: #3b1f19;
+  --user: #2f6b3a; --user-ink: #f1faf0; --speak: #d6a8ff; --fix: #223f1f; --fix-ink: #bfe8b3;
+}
+[data-theme=sunset] {
+  color-scheme: light;
+  --bg: #fbf3ea; --surface: #fffaf5; --surface2: #f8ecdf; --border: #e7d3bf; --text: #2b1d14; --muted: #7a6455;
+  --accent: #c2410c; --accent-ink: #ffffff; --accent-soft: #fde3d0;
+  --ok: #2f7d32; --warn: #a85d00; --err: #b3261e; --err-soft: #fde7e4;
+  --user: #c2410c; --user-ink: #ffffff; --speak: #9333ea; --fix: #e8f4df; --fix-ink: #2c5a1d;
+}
+[data-theme=rose] {
+  color-scheme: light;
+  --bg: #faf2f5; --surface: #ffffff; --surface2: #f6e9ee; --border: #e6d0d9; --text: #2a1a21; --muted: #7b6470;
+  --accent: #be185d; --accent-ink: #ffffff; --accent-soft: #fbdbe8;
+  --ok: #2f7d32; --warn: #a85d00; --err: #b3261e; --err-soft: #fde7e4;
+  --user: #be185d; --user-ink: #ffffff; --speak: #6d28d9; --fix: #e8f4df; --fix-ink: #2c5a1d;
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
@@ -191,3 +219,18 @@ table.cost tr.sum td { border-top: 1px solid var(--border); font-weight: 700; pa
 .mistake .said { color: var(--err); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--err) 50%, transparent); }
 .mistake .better { color: var(--fix-ink); background: var(--fix); border-radius: 6px; padding: 1px 6px; display: inline-block; margin: 3px 0; }
 .mistake .why { color: var(--muted); font-size: 13px; }
+
+/* ---------- microphone settings, themes, instructions ---------- */
+.meter { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; margin: 2px 0 6px; }
+.meter div { height: 100%; width: 0; background: var(--ok); transition: width 60ms linear; }
+.meter div.hot { background: var(--warn); }
+.themes { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; margin-bottom: 4px; }
+.swatch { display: flex; align-items: center; gap: 7px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); cursor: pointer; font-size: 13px; }
+.swatch.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.swatch i { width: 16px; height: 16px; border-radius: 50%; border: 1px solid rgba(128, 128, 128, .5); flex: none; }
+.field textarea { resize: vertical; min-height: 84px; }
+.count { font-size: 12px; color: var(--muted); text-align: right; margin-top: -8px; margin-bottom: 8px; }
+#instrBtn.set::after { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-left: 6px; vertical-align: middle; }
+@media (max-width: 760px) { #instrBtn { display: none; } }
+.tabpane h3.first { margin-top: 0; }
+.muted.lead { margin-bottom: 12px; }

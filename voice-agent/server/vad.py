@@ -48,6 +48,10 @@ class TurnDetector:
         self._buf = np.zeros(0, dtype=np.int16)
         self.reset()
 
+    def set_threshold(self, threshold: float) -> None:
+        self.threshold = threshold
+        self.neg_threshold = max(threshold - 0.15, 0.05)
+
     def set_min_silence(self, ms: float) -> None:
         self.silence_windows = max(self.pause_windows + 1, int(ms / (WINDOW * 1000 / SAMPLE_RATE)))
 

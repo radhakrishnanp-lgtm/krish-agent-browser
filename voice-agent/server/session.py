@@ -26,6 +26,7 @@ MIN_TTS_CHARS = 12          # shorter sentences ("Hi!") are merged with the next
 FIRST_CLAUSE_CHARS = 60     # a long first sentence is split at a comma so audio starts sooner
 TTS_PARALLEL = 3            # sentences synthesised at once (played back in order)
 TITLE_CHARS = 48
+MAX_INSTRUCTIONS = 2000
 SPOKEN_RULES = ("Your replies are spoken aloud, so keep them short and conversational: one to three "
                 "sentences unless asked for more. No markdown, no lists, no emojis.")
 
@@ -53,6 +54,8 @@ class Session:
         self.user_pause_ms: int | None = None
         self.record = bool((cfg.default.get("recording") or {}).get("enabled", True))
         self.record_allowed = self.record
+        self.record_cap_mb = float((cfg.default.get("recording") or {}).get("max_total_mb") or 0)
+        self.default_threshold = float(cfg.default.get("vad", {}).get("threshold", 0.5))
         self.review_task: asyncio.Task | None = None
         self.turn_task: asyncio.Task | None = None
         self.early: dict | None = None       # speculative STT started during a pause
@@ -115,6 +118,7 @@ class Session:
                        "custom": bool(m.get("custom")), "review": bool(m.get("review_prompt"))}
                       for k, m in self.all_modes().items()],
             "recording_allowed": self.record_allowed,
+            "instructions": self.store.profile().get("instructions", ""),
             "default_mode": self.cfg.default_mode,
             "voices": list(tts.options.get("voices") or ([tts.options["voice"]] if tts.options.get("voice") else [])),
             "default_voice": tts.options.get("voice"),
@@ -167,6 +171,7 @@ class Session:
         self.send({"type": "conversation", "conversation": c and {
             "id": c["id"], "title": c["title"], "mode": c["mode"], "messages": c["messages"],
             "review": c.get("review"), "user_seconds": round(c.get("user_seconds", 0), 1),
+            "instructions": c.get("instructions", ""),
             "totals": {k: round(v, 8) for k, v in c["totals"].items()}}})
 
     def all_modes(self) -> dict:
@@ -186,6 +191,33 @@ class Session:
         ms = self.user_pause_ms or self.mode().get("min_silence_ms") or self.default_silence_ms
         self.min_silence_ms = int(ms)
         self.vad.set_min_silence(self.min_silence_ms)
+
+    def set_instructions(self, data: dict) -> None:
+        """Standing instructions for every conversation, and extra ones for the open conversation."""
+        try:
+            if "global" in data:
+                profile = self.store.profile()
+                profile["instructions"] = str(data.get("global") or "").strip()[:MAX_INSTRUCTIONS]
+                self.store.save_profile(profile)
+            if "conversation" in data and self.conv:
+                self.conv["instructions"] = str(data.get("conversation") or "").strip()[:MAX_INSTRUCTIONS]
+                self._save_conv()
+        except OSError as e:
+            self.emit_log("error", f"Could not save the instructions: {e}")
+            return
+        self.send({"type": "instructions", "global": self.store.profile().get("instructions", ""),
+                   "conversation": self.conv.get("instructions", "") if self.conv else ""})
+        self.emit_log("info", "Instructions saved. They apply from your next message.")
+
+    def system_prompt(self) -> str:
+        parts = [self.mode()["system_prompt"].strip()]
+        mine = self.store.profile().get("instructions", "").strip()
+        here = (self.conv or {}).get("instructions", "").strip()
+        if mine:
+            parts.append("The user's standing instructions for every conversation (follow them):\n" + mine)
+        if here:
+            parts.append("The user's instructions for this conversation (follow them; they win over anything above):\n" + here)
+        return "\n\n".join(parts)
 
     def save_custom_mode(self, name, instructions, greeting) -> None:
         name = " ".join(str(name or "").split())[:40]
@@ -300,6 +332,11 @@ class Session:
         except (TypeError, ValueError):
             self.user_pause_ms = None
         self._apply_pause()
+        try:
+            threshold = min(0.9, max(0.15, float(data["sensitivity"]))) if data.get("sensitivity") else self.default_threshold
+        except (TypeError, ValueError):
+            threshold = self.default_threshold
+        self.vad.set_threshold(threshold)
         allowed = self.stages["tts"].options.get("voices") or []
         self.user_voice = voice if isinstance(voice, str) and voice in allowed else None
         try:
@@ -508,6 +545,12 @@ class Session:
     def _save_audio(self, conv: dict, role: str, pcm: bytes, sample_rate: int) -> str | None:
         if not self.record or not pcm:
             return None
+        if self.record_cap_mb and self.store.audio_mb() >= self.record_cap_mb:
+            if not getattr(self, "_cap_warned", False):
+                self._cap_warned = True
+                self.emit_log("warn", f"Recording paused: saved audio has reached the {self.record_cap_mb:.0f} MB limit "
+                                      "(recording.max_total_mb). Delete old conversations to free space.")
+            return None
         try:
             return self.store.save_audio(conv["id"], len(conv["messages"]), role, pcm, sample_rate)
         except OSError as e:
@@ -630,7 +673,7 @@ class Session:
         llm = self.stages["llm"]
         max_msgs = int((self.cfg.default.get("assistant") or {}).get("max_history_turns", 20)) * 2
         history = [{"role": m["role"], "content": m["content"]} for m in self.conv["messages"][-(max_msgs + 1):]]
-        messages = [{"role": "system", "content": self.mode()["system_prompt"].strip()}] + history
+        messages = [{"role": "system", "content": self.system_prompt()}] + history
         self.send({"type": "status", "state": "thinking"})
         t = time.monotonic()
         usage, pending, first, sent_any = None, "", True, False

@@ -14,4 +14,5 @@ import yaml
 s = (yaml.safe_load(open('config/default.yaml')) or {}).get('server', {})
 print(s.get('host', '0.0.0.0'), s.get('port', 8080))")
 
-exec python3 -m uvicorn server.main:app --host "${HOST:-$CFG_HOST}" --port "${PORT:-$CFG_PORT}"
+# No access log: request URLs carry the access token. 2 MB is far above any audio frame the UI sends.
+exec python3 -m uvicorn server.main:app --host "${HOST:-$CFG_HOST}" --port "${PORT:-$CFG_PORT}" --no-access-log --ws-max-size 2097152

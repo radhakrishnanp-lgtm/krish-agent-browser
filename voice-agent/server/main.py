@@ -5,13 +5,14 @@ Run:  uvicorn server.main:app --host 0.0.0.0 --port 8080   (from the voice-agent
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
 import json
 import logging
 import os
 import re
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -37,11 +38,87 @@ SESSION_ID = re.compile(r"^[0-9a-f-]{20,40}$")
 _storage = cfg.default.get("storage") or {}
 store = Store(ROOT / _storage.get("conversations_dir", "data/conversations"), ROOT / _storage.get("audio_dir", "data/audio"))
 
-app = FastAPI(title="Voice Agent")
+app = FastAPI(title="Voice Agent", docs_url=None, redoc_url=None, openapi_url=None)
+
+MAX_CONNECTIONS = int((cfg.default.get("server") or {}).get("max_connections", 20))
+_connections = 0
+
+SECURITY_HEADERS = {
+    # Only this site's own scripts, styles and audio; no inline script, no framing.
+    "Content-Security-Policy": "default-src 'self'; connect-src 'self' ws: wss:; media-src 'self' blob:; "
+                               "img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",          # the access token travels in URLs; never leak it in a Referer
+    "Permissions-Policy": "microphone=(self), camera=(), geolocation=()",
+    "Cross-Origin-Resource-Policy": "same-origin",
+}
 
 
-def token_ok(token: str | None) -> bool:
-    return not ACCESS_TOKEN or hmac.compare_digest((token or "").encode(), ACCESS_TOKEN.encode())
+@app.middleware("http")
+async def security_headers(request, call_next):
+    response = await call_next(request)
+    for key, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(key, value)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "private, no-store"
+    return response
+
+
+# Extra host names the UI may be served from, e.g. "voice.example.com". Needed only when a
+# proxy in front of the app replaces the Host header with something else.
+ALLOWED_ORIGINS = {h.strip().lower() for h in os.environ.get("ALLOWED_ORIGINS", "").split(",") if h.strip()}
+
+
+def same_origin(ws: WebSocket) -> bool:
+    """Blocks other websites from opening the socket from a visitor's browser
+    (cross-site WebSocket hijacking). Non-browser clients send no Origin and are allowed."""
+    origin = ws.headers.get("origin")
+    if not origin:
+        return True
+    origin_host = origin.split("://", 1)[-1].lower()
+    hosts = {(ws.headers.get("x-forwarded-host") or "").lower(), (ws.headers.get("host") or "").lower()} | ALLOWED_ORIGINS
+    return origin_host in hosts
+
+
+AUTH_COOKIE = "va_auth"
+# The cookie holds a value derived from the token, so the token itself never appears in a
+# URL, a log line or page-readable storage.
+AUTH_VALUE = hashlib.sha256(f"voice-agent:{ACCESS_TOKEN}".encode()).hexdigest()
+
+
+def _same(a: str, b: str) -> bool:
+    return hmac.compare_digest(a.encode(), b.encode())
+
+
+def authorized(conn) -> bool:
+    """True if no token is configured, or the request carries the login cookie or a Bearer token."""
+    if not ACCESS_TOKEN:
+        return True
+    if _same(conn.cookies.get(AUTH_COOKIE, ""), AUTH_VALUE):
+        return True
+    header = conn.headers.get("authorization", "")
+    return header.startswith("Bearer ") and _same(header[7:], ACCESS_TOKEN)
+
+
+def require_auth(request: Request) -> None:
+    if not authorized(request):
+        raise HTTPException(401, "Sign in with the access token first")
+
+
+@app.post("/api/login")
+async def login(request: Request):
+    try:
+        token = str((await request.json()).get("token", ""))
+    except Exception:
+        token = ""
+    if not ACCESS_TOKEN or not _same(token, ACCESS_TOKEN):
+        await asyncio.sleep(1.0)  # slows down token guessing
+        raise HTTPException(401, "Wrong access token")
+    response = Response(status_code=204)
+    secure = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
+    response.set_cookie(AUTH_COOKIE, AUTH_VALUE, max_age=60 * 60 * 24 * 90, httponly=True, samesite="strict", secure=secure, path="/")
+    return response
 
 
 @app.get("/healthz")
@@ -50,9 +127,8 @@ def healthz():
 
 
 @app.get("/api/sessions/{session_id}")
-def session_log(session_id: str, token: str | None = None):
-    if not token_ok(token):
-        raise HTTPException(401, "Invalid access token")
+def session_log(session_id: str, request: Request):
+    require_auth(request)
     path = SESSIONS_DIR / f"{session_id}.json"
     if not SESSION_ID.match(session_id) or not path.exists():
         raise HTTPException(404, "Session log not found (it is written after the first turn)")
@@ -60,9 +136,8 @@ def session_log(session_id: str, token: str | None = None):
 
 
 @app.get("/api/audio/{conv_id}/{name}")
-def message_audio(conv_id: str, name: str, token: str | None = None):
-    if not token_ok(token):
-        raise HTTPException(401, "Invalid access token")
+def message_audio(conv_id: str, name: str, request: Request):
+    require_auth(request)
     path = store.audio_path(conv_id, name)
     if not path or not path.exists():
         raise HTTPException(404, "Recording not found")
@@ -70,9 +145,8 @@ def message_audio(conv_id: str, name: str, token: str | None = None):
 
 
 @app.get("/api/conversations/{conv_id}/recording.wav")
-def conversation_recording(conv_id: str, token: str | None = None):
-    if not token_ok(token):
-        raise HTTPException(401, "Invalid access token")
+def conversation_recording(conv_id: str, request: Request):
+    require_auth(request)
     conv = store.load(conv_id)
     data = store.full_recording(conv) if conv else None
     if not data:
@@ -81,11 +155,28 @@ def conversation_recording(conv_id: str, token: str | None = None):
 
 
 @app.websocket("/ws")
-async def ws_endpoint(ws: WebSocket, token: str | None = None):
-    await ws.accept()
-    if not token_ok(token):
-        await ws.close(code=4401, reason="Invalid access token")
+async def ws_endpoint(ws: WebSocket):
+    global _connections
+    if not same_origin(ws):
+        log.warning("Refused WebSocket from origin %s (Host is %s). If this is your own site behind a proxy, "
+                    "set ALLOWED_ORIGINS to its host name.", ws.headers.get("origin"), ws.headers.get("host"))
+        await ws.close(code=1008)
         return
+    await ws.accept()
+    if not authorized(ws):
+        await ws.close(code=4401, reason="Sign in first")
+        return
+    if _connections >= MAX_CONNECTIONS:
+        await ws.close(code=1013, reason="Too many connections")
+        return
+    _connections += 1
+    try:
+        await _serve(ws)
+    finally:
+        _connections -= 1
+
+
+async def _serve(ws: WebSocket) -> None:
 
     outbox: asyncio.Queue = asyncio.Queue()
 
@@ -150,6 +241,8 @@ async def ws_endpoint(ws: WebSocket, token: str | None = None):
                 session.rename_conversation(str(data.get("id")), str(data.get("title", "")))
             elif kind == "settings":
                 session.apply_settings(data)
+            elif kind == "set_instructions":
+                session.set_instructions(data)
             elif kind == "review":
                 session.start_review()
             elif kind == "save_mode":

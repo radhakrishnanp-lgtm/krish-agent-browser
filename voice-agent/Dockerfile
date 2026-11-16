@@ -15,4 +15,4 @@ RUN mkdir -p logs/sessions data/conversations && useradd -m app && chown -R app 
 USER app
 
 EXPOSE 8080
-CMD ["sh", "-c", "exec python -m uvicorn server.main:app --host 0.0.0.0 --port ${PORT:-8080} --proxy-headers --forwarded-allow-ips='*'"]
+CMD ["sh", "-c", "exec python -m uvicorn server.main:app --host 0.0.0.0 --port ${PORT:-8080} --no-access-log --ws-max-size 2097152 --proxy-headers --forwarded-allow-ips='*'"]
